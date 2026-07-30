@@ -281,9 +281,13 @@ const wallIds = r => (r=r||room(), r.shape==='single'?['A']:r.shape==='U'?['A','
 const counterH = r => (r=r||room(), r.baseH + r.ctT);
 const upperBottom = r => (r=r||room(), counterH(r) + r.splash);
 const upperTop = r => (r=r||room(), upperBottom(r) + Number(r.upH));
+/* Wall A's t=0 and Wall B's t=0 land on the exact same physical point (verified
+   against both the 2D plan's runH/runV and the 3D placeRun's pos() math) — that's
+   the room's actual shared corner. So the wall carrying the lazy-susan treatment
+   ("big") must have its corner flagged at start, matching the wall it meets. */
 function corners(r, id){
-  if(r.shape==='L')  return id==='A'?{start:false,end:true}:{start:true,end:false};
-  if(r.shape==='U'){ if(id==='A')return{start:false,end:true}; if(id==='B')return{start:true,end:true}; return{start:true,end:false}; }
+  if(r.shape==='L')  return id==='A'?{start:true,end:false,big:true}:{start:true,end:false,big:false};
+  if(r.shape==='U'){ if(id==='A')return{start:true,end:false,big:true}; if(id==='B')return{start:true,end:true,big:false}; return{start:true,end:false}; }
   return {start:false,end:false};
 }
 
@@ -313,8 +317,11 @@ function towerFill(width, out, r){
 function layoutWall(r, id){
   const L = Number(r.walls[id])||0, cfg = r.cfg[id]||{}, cr = corners(r,id);
   const items = [];
-  let usable = L - (cr.start?24:0) - (cr.end?(r.type==='kitchen'?LS:24):0);
-  if(cr.start) items.push({code:'CR', w:24, type:'corner', label:'CNR'});
+  const bigW = cr.big && r.type==='kitchen' ? LS : 24;
+  let usable = L - (cr.start?bigW:0) - (cr.end?bigW:0);
+  if(cr.start) items.push(cr.big && r.type==='kitchen'
+    ? {code:'LS36', w:LS, type:'ls', label:'LS36'}
+    : {code:'CR', w:24, type:'corner', label:'CNR'});
 
   const fixed = [];
   let endTall = null, fridgeW = 0;
@@ -351,8 +358,9 @@ function layoutWall(r, id){
   greedyFill(per, items, fillCode, false);
   for(const f of fixed){ items.push(f); fi++;
     greedyFill(fi===slots-1 ? fill - per*(slots-1) + per : per, items, fillCode, f.type==='range'); }
-  if(cr.end && r.type==='kitchen') items.push({code:'LS36', w:LS, type:'ls', label:'LS36'});
-  else if(cr.end) items.push({code:'CR', w:24, type:'corner', label:'CNR'});
+  if(cr.end) items.push(cr.big && r.type==='kitchen'
+    ? {code:'LS36', w:LS, type:'ls', label:'LS36'}
+    : {code:'CR', w:24, type:'corner', label:'CNR'});
   if(endTall) items.push(endTall);
   if(fridgeW) items.push({code:'REF', w:FR_W, type:'fridge', label:'REF 36"'});
 
@@ -602,6 +610,8 @@ function draw3D(){
   const mWall=new THREE.MeshLambertMaterial({color:0xf5f2ec});
   const mFlr=new THREE.MeshLambertMaterial({color:0xd8cdbd});
   const mMir=new THREE.MeshLambertMaterial({color:0xcfe0ea});
+  const mSash=new THREE.MeshLambertMaterial({color:0xffffff});
+  const mGlass=new THREE.MeshLambertMaterial({color:0xbfd8e6, transparent:true, opacity:.5});
   const edgeCol=lum(CABCOL[r.fin.cab].h)>.5?0x6b6b66:0x1f1a14;
   const edge=geo=>new THREE.LineSegments(new THREE.EdgesGeometry(geo),new THREE.LineBasicMaterial({color:edgeCol}));
 
@@ -667,7 +677,15 @@ function draw3D(){
     }
     for(const u of (lay.uppers||[])){
       if(u.type==='mirror'){put(u.w*.76,u.h,1.2,u.x+u.w*.12,u.bottom+u.h/2,-1.2+2,mMir,false);continue;}
-      if(u.h<=0||u.type==='window'||u.type==='fillerU')continue;
+      if(u.type==='window'){
+        const wB=upperBottom(r), wH=upperTop(r)-wB, ww=u.w*.8, wx=u.x+u.w*.1;
+        put(ww, wH, 2, wx, wB+wH/2, -4, mSash, false);
+        put(ww-3, wH-4, .5, wx+1.5, wB+wH/2, -2.2, mGlass, false);
+        put(.8, wH-4, .6, wx+ww/2-.4, wB+wH/2, -2.3, mSash, false);
+        put(ww-3, .8, .6, wx+1.5, wB+wH/2, -2.3, mSash, false);
+        continue;
+      }
+      if(u.h<=0||u.type==='fillerU')continue;
       const d=u.type==='overRef'?24:ud;
       put(u.w-.5,u.h,d,u.x+.25,u.bottom+u.h/2,0,mCab);
       doorFace(u.w-.5,u.h-3,u.x+.25,u.bottom+u.h/2,d);
