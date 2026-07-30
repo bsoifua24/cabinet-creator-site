@@ -1,0 +1,1128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cabinet Creator — Plan Takeoff & Cabinet Design</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --paper:#eef1f4; --sheet:#fff; --ink:#1b2a3a; --ink-soft:#5d6d80;
+    --dim:#c4452c; --line:#c9d2db; --hatch:#eef3f7;
+    --mono:'IBM Plex Mono',monospace; --sans:'IBM Plex Sans',sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:var(--sans);background:var(--paper);color:var(--ink);font-size:14px}
+
+  header{background:var(--sheet);border-bottom:2px solid var(--ink);display:flex;align-items:stretch}
+  .tb-cell{padding:10px 16px;border-right:1px solid var(--line)}
+  .tb-cell .lbl{font:600 10px var(--mono);letter-spacing:.12em;color:var(--ink-soft);text-transform:uppercase}
+  .tb-cell .val{font:600 16px var(--sans)}
+  .tb-logo{display:flex;flex-direction:column;justify-content:center;padding:10px 20px;border-right:2px solid var(--ink)}
+  .tb-logo b{font:700 19px var(--sans)}
+  .tb-logo span{font:500 10px var(--mono);letter-spacing:.18em;color:var(--dim)}
+  .tb-cell input{border:none;font:600 16px var(--sans);color:var(--ink);width:100%;background:transparent;outline:none;border-bottom:1px dashed transparent}
+  .tb-cell input:focus{border-bottom:1px dashed var(--dim)}
+  header .spacer{flex:1}
+  header .actions{display:flex;align-items:center;gap:8px;padding:0 16px}
+  button{font:600 13px var(--sans);border:1.5px solid var(--ink);background:var(--sheet);color:var(--ink);padding:8px 14px;cursor:pointer;border-radius:2px}
+  button:hover{background:var(--ink);color:#fff}
+  button.primary{background:var(--dim);border-color:var(--dim);color:#fff}
+  button.primary:hover{background:#a5361f;border-color:#a5361f}
+  button.ghost{border-color:var(--line);color:var(--ink-soft)}
+
+  /* top-level pages */
+  .pagenav{display:flex;background:var(--sheet);border-bottom:1px solid var(--line);padding:0 20px}
+  .pagenav button{border:none;padding:12px 20px;font:600 12px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ink-soft);border-radius:0}
+  .pagenav button:hover{background:transparent;color:var(--dim)}
+  .pagenav button.on{color:var(--ink);box-shadow:inset 0 -3px 0 var(--dim)}
+  .page{display:none}.page.on{display:block}
+
+  /* import page */
+  .imp{max-width:880px;margin:26px auto;padding:0 20px}
+  .card{background:var(--sheet);border:1px solid var(--line);padding:20px;margin-bottom:16px;box-shadow:0 1px 3px rgba(27,42,58,.07)}
+  .card h2{font:600 13px var(--mono);letter-spacing:.14em;text-transform:uppercase;margin-bottom:12px}
+  .card h2::before{content:"▸ ";color:var(--dim)}
+  .drop{border:2px dashed var(--line);padding:34px;text-align:center;color:var(--ink-soft);cursor:pointer;border-radius:2px}
+  .drop.hot{border-color:var(--dim);color:var(--dim);background:#fdf6f4}
+  .filelist{margin-top:10px;font:500 12px var(--mono)}
+  .filelist span{display:inline-block;background:var(--hatch);border:1px solid var(--line);padding:4px 8px;margin:3px;border-radius:2px}
+  textarea{width:100%;min-height:180px;font:500 12px var(--mono);border:1px solid var(--line);padding:10px;border-radius:2px}
+  .status{font:500 12px var(--mono);color:var(--ink-soft);margin-top:8px;min-height:18px}
+  .warn{background:#fdf6e8;border:1px solid #e4cf9a;padding:10px 12px;font-size:12px;line-height:1.5;color:#6d5518;border-radius:2px;margin-top:10px}
+
+  /* designer layout */
+  .wrap{display:grid;grid-template-columns:330px 1fr;min-height:calc(100vh - 110px)}
+  aside{background:var(--sheet);border-right:1px solid var(--line);padding:18px;overflow-y:auto;max-height:calc(100vh - 110px)}
+  main{padding:18px;overflow:auto}
+  .fld{margin-bottom:12px}
+  .fld label{display:block;font:600 10px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ink-soft);margin-bottom:4px}
+  .fld input,.fld select{width:100%;padding:8px;border:1px solid var(--line);border-radius:2px;font:500 14px var(--mono);color:var(--ink);background:#fff}
+  .fld input:focus,.fld select:focus{outline:none;border-color:var(--dim)}
+  .row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .sect{border-top:1px solid var(--line);margin-top:16px;padding-top:14px}
+  .sect>h3{font:600 11px var(--mono);letter-spacing:.14em;text-transform:uppercase;margin-bottom:10px}
+  .sect>h3::before{content:"▸ ";color:var(--dim)}
+  .chk{display:flex;align-items:center;gap:8px;font:500 13px;margin:6px 0;cursor:pointer}
+  .chk input{accent-color:var(--dim)}
+  .wallcard{border:1px solid var(--line);border-radius:2px;padding:10px;margin-bottom:10px;background:#fbfcfd}
+  .wallcard h4{font:600 12px var(--mono);letter-spacing:.08em;margin-bottom:8px;color:var(--dim)}
+  .hint{font:400 11px;color:var(--ink-soft);margin-top:4px;line-height:1.4}
+
+  /* room chips */
+  .rooms{display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:10px 18px;background:var(--sheet);border-bottom:1px solid var(--line)}
+  .rchip{display:flex;align-items:center;gap:6px;border:1.5px solid var(--line);background:#fff;padding:6px 6px 6px 12px;font:600 12px var(--mono);cursor:pointer;border-radius:2px}
+  .rchip.on{border-color:var(--dim);color:var(--dim)}
+  .rchip i{font-style:normal;color:var(--ink-soft);padding:0 6px;border-radius:2px}
+  .rchip i:hover{background:var(--dim);color:#fff}
+  .rooms select{padding:6px;border:1px solid var(--line);font:600 12px var(--mono)}
+
+  /* finish swatches */
+  .swrow{display:flex;flex-wrap:wrap;gap:6px}
+  .sw{width:44px;cursor:pointer;text-align:center}
+  .sw .c{height:30px;border:1.5px solid var(--line);border-radius:2px}
+  .sw.on .c{border-color:var(--dim);box-shadow:0 0 0 2px #f5d5cc}
+  .sw .n{font:500 8.5px var(--mono);color:var(--ink-soft);margin-top:2px;line-height:1.15}
+  .segs{display:flex;gap:0}
+  .segs button{flex:1;border-radius:0;font:600 11px var(--mono);padding:7px 4px;border-color:var(--line);color:var(--ink-soft)}
+  .segs button.on{background:var(--ink);border-color:var(--ink);color:#fff}
+
+  /* tabs & views */
+  .tabs{display:flex;margin-bottom:14px;border-bottom:2px solid var(--ink)}
+  .tab{font:600 12px var(--mono);letter-spacing:.08em;text-transform:uppercase;padding:9px 18px;border:none;background:transparent;color:var(--ink-soft);cursor:pointer;border-radius:0}
+  .tab:hover{background:transparent;color:var(--dim)}
+  .tab.on{color:var(--ink);box-shadow:inset 0 -3px 0 var(--dim)}
+  .view{display:none}.view.on{display:block}
+  .sheetbox{background:var(--sheet);border:1px solid var(--line);box-shadow:0 1px 3px rgba(27,42,58,.08);padding:10px;position:relative}
+  .sheetbox .stamp{position:absolute;top:10px;right:14px;font:600 10px var(--mono);letter-spacing:.12em;color:var(--ink-soft);text-transform:uppercase}
+  canvas.draw{width:100%;display:block}
+  .elevpick{display:flex;gap:6px;margin-bottom:10px}
+  .elevpick button{padding:6px 12px;font:600 12px var(--mono)}
+  .elevpick button.on{background:var(--ink);color:#fff}
+  #cv3d{width:100%;display:block;cursor:grab}
+  #v3d .sheetbox{padding:0;overflow:hidden}
+
+  table{border-collapse:collapse;width:100%;background:var(--sheet)}
+  th,td{border:1px solid var(--line);padding:7px 10px;font:500 13px var(--mono);text-align:left}
+  th{background:var(--ink);color:#fff;font:600 11px var(--mono);letter-spacing:.08em;text-transform:uppercase}
+  tr.grp td{background:var(--hatch);font-weight:600}
+  .totals{margin-top:10px;font:600 13px var(--mono);color:var(--dim)}
+
+  #printset{display:none}
+  @media print{
+    body>header,.pagenav,.rooms,.wrap{display:none !important}
+    body{background:#fff}
+    #printset{display:block}
+    .psheet{page-break-after:always;border:2px solid #1b2a3a;height:97vh;display:flex;flex-direction:column;position:relative}
+    .psheet img{width:100%;height:auto;max-height:74vh;object-fit:contain}
+    .psheet h2{font:600 13px var(--mono);letter-spacing:.12em;text-transform:uppercase;padding:10px 12px}
+    .psheet .fin{font:500 11px var(--mono);padding:0 12px 6px;color:#5d6d80}
+    .psheet .body{padding:0 12px;flex:1;display:flex;align-items:center;justify-content:center}
+    .psheet table{font-size:11px}
+    .ptb{margin-top:auto;border-top:2px solid #1b2a3a;display:grid;grid-template-columns:2fr 1.4fr 1.4fr 1fr .8fr;font-family:var(--mono)}
+    .ptb div{border-right:1px solid #c9d2db;padding:6px 10px}
+    .ptb .l{font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:#5d6d80}
+    .ptb .v{font-size:13px;font-weight:600}
+  }
+  @media (max-width:900px){.wrap{grid-template-columns:1fr}aside{max-height:none}}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="tb-logo"><b>Cabinet Creator</b><span>PLAN TAKEOFF · DESIGN · PRELIM SET</span></div>
+  <div class="tb-cell" style="min-width:180px"><div class="lbl">Project</div><input id="pName" value="Untitled Residence"></div>
+  <div class="tb-cell" style="min-width:150px"><div class="lbl">Client</div><input id="pClient" value=""></div>
+  <div class="tb-cell"><div class="lbl">Date</div><div class="val" id="pDate"></div></div>
+  <div class="spacer"></div>
+  <div class="actions">
+    <button id="btnSave">Save file</button>
+    <button id="btnLoad">Open file</button>
+    <input type="file" id="fileIn" accept=".json" hidden>
+    <button class="primary" id="btnPrint">Print drawing set</button>
+  </div>
+</header>
+
+<div class="pagenav">
+  <button class="on" data-p="pImport">1 · Import plans</button>
+  <button data-p="pDesign">2 · Designer</button>
+</div>
+
+<!-- ================= IMPORT PAGE ================= -->
+<div class="page on" id="pImport">
+  <div class="imp">
+    <div class="card">
+      <h2>Upload the architect's plans</h2>
+      <div class="drop" id="drop">Drop floor-plan pages here, or click to choose<br>
+        <span style="font-size:11px">JPG · PNG · WEBP · PDF — include the dimensioned floor plan for each room</span></div>
+      <input type="file" id="planIn" accept="image/jpeg,image/png,image/webp,application/pdf" multiple hidden>
+      <div class="filelist" id="planList"></div>
+    </div>
+
+    <div class="card">
+      <h2>AI plan takeoff</h2>
+      <p style="font-size:13px;color:var(--ink-soft);margin-bottom:12px">One click — the analysis runs on this site's own server. Nothing to install or configure.</p>
+      <button class="primary" id="btnAnalyze">Analyze plans → extract rooms & dimensions</button>
+      <div class="status" id="aiStatus"></div>
+      <div class="warn"><b>Verify before pricing.</b> The takeoff reads dimension strings and scales off the drawing — treat every number as preliminary and confirm against the plan or on site, exactly as shop drawings require.</div>
+      <details style="margin-top:10px">
+        <summary style="font:600 11px var(--mono);color:var(--ink-soft);cursor:pointer">Advanced — run with your own API key (local testing only)</summary>
+        <div class="fld" style="margin-top:8px"><label>Anthropic API key (stored only in this browser)</label>
+          <input id="apiKey" type="password" placeholder="sk-ant-..."></div>
+      </details>
+    </div>
+
+    <div class="card">
+      <h2>Review extracted rooms</h2>
+      <textarea id="aiJson" placeholder='The takeoff result appears here as editable JSON, e.g.
+{"rooms":[{"name":"Kitchen","type":"kitchen","shape":"L","ceiling":96,
+  "walls":{"A":150,"B":126},
+  "fixtures":{"A":{"sink":true,"dw":true,"window":true},"B":{"range":true,"fridge":true}}}]}'></textarea>
+      <div style="margin-top:10px;display:flex;gap:8px">
+        <button class="primary" id="btnApply">Apply to project → open Designer</button>
+        <button class="ghost" id="btnSkip">Skip — enter rooms by hand</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ================= DESIGNER PAGE ================= -->
+<div class="page" id="pDesign">
+  <div class="rooms" id="roomBar"></div>
+  <div class="wrap">
+  <aside id="sidebar"></aside>
+  <main>
+    <div class="tabs">
+      <button class="tab on" data-v="vplan">Plan · Top</button>
+      <button class="tab" data-v="velev">Elevation</button>
+      <button class="tab" data-v="v3d">3D View</button>
+      <button class="tab" data-v="vsched">Schedule</button>
+    </div>
+    <div class="view on" id="vplan"><div class="sheetbox"><span class="stamp">Plan — scale to fit</span><canvas class="draw" id="cvPlan" width="1600" height="1100"></canvas></div></div>
+    <div class="view" id="velev">
+      <div class="elevpick" id="elevPick"></div>
+      <div class="sheetbox"><span class="stamp">Elevation</span><canvas class="draw" id="cvElev" width="1600" height="900"></canvas></div>
+    </div>
+    <div class="view" id="v3d"><div class="sheetbox"><canvas id="cv3d" width="1600" height="900"></canvas></div>
+      <p class="hint" style="margin-top:8px">Drag to orbit · scroll to zoom. Finishes update live.</p></div>
+    <div class="view" id="vsched"><div class="sheetbox" style="padding:16px">
+      <div id="schedTbl"></div><div class="totals" id="schedTot"></div>
+      <button id="btnCSV" style="margin-top:12px">Copy schedule as CSV</button></div></div>
+  </main>
+  </div>
+</div>
+
+<div id="printset"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script>
+if(window.pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+</script>
+<script>
+/* ============================================================
+   CABINET CREATOR v2 — multi-room, AI takeoff, finishes, 3D
+   All dimensions in inches.
+============================================================ */
+const $ = id => document.getElementById(id);
+const STD = [36,33,30,27,24,21,18,15,12];
+const FR_W=36, FR_H=70, RANGE_W=30, DW_W=24, SINK_W=36, LS=36, WD_W=27, WD_H=38, TOILET=30, TALL_H=84;
+
+/* ---- room types ---- */
+const TYPES = {
+  kitchen:{label:'Kitchen', baseH:34.5, baseD:24, toe:4.5, ctT:1.5, splash:18, upD:12, upH:42, uppers:true,
+    fixtures:{sink:'Sink (SB36)', dw:'Dishwasher 24"', range:'Range 30"', fridge:'Refrigerator 36"', window:'Window over sink'},
+    sinks:['Undermount — Single','Undermount — Double','Farmhouse Apron']},
+  bath:{label:'Bathroom', baseH:31, baseD:21, toe:4, ctT:1, splash:4, upD:0, upH:0, uppers:false,
+    fixtures:{vanity:'Vanity sink (VSB36)', vanity2:'Second sink (double vanity)', linen:'Linen tower 18"', toilet:'Toilet space 30"'},
+    sinks:['Undermount Oval','Vessel Bowl','Integrated Top']},
+  laundry:{label:'Laundry', baseH:34.5, baseD:24, toe:4.5, ctT:1.5, splash:18, upD:12, upH:36, uppers:true,
+    fixtures:{washer:'Washer 27"', dryer:'Dryer 27"', sink:'Utility sink (SB30)', tall:'Tall storage 18"'},
+    sinks:['Drop-in Utility','Undermount — Single']},
+  closet:{label:'Closet', baseH:0, baseD:14, toe:0, ctT:0, splash:0, upD:0, upH:0, uppers:false,
+    fixtures:{drawers:'Drawer tower', shelves:'Shelf towers', rods:'Hanging rods'},
+    sinks:[]}
+};
+const DOORS = ['Slab','Shaker','Raised Panel'];
+const CABCOL = [
+  {n:'Painted White', h:'#f0ede6'}, {n:'Dove Grey', h:'#b9bdc1'}, {n:'Sage Green', h:'#8a9781'},
+  {n:'Navy Blue', h:'#2e3f54'}, {n:'Stained Oak', h:'#9d7b52'}, {n:'Walnut', h:'#5d4531'}, {n:'Matte Black', h:'#2f2f30'}
+];
+const TOPCOL = [
+  {n:'White Quartz', h:'#eceae4'}, {n:'Carrara Marble', h:'#dcdde2'}, {n:'Butcher Block', h:'#c49a5e'},
+  {n:'Concrete', h:'#a8a8a3'}, {n:'Black Granite', h:'#33373a'}
+];
+
+function newRoom(type, name){
+  const t = TYPES[type];
+  const r = {
+    id: Math.random().toString(36).slice(2,8), name: name || t.label, type,
+    shape: type==='kitchen' ? 'L' : 'single', ceil: 96, upH: t.upH, upD: t.upD,
+    baseH:t.baseH, baseD:t.baseD, toe:t.toe, ctT:t.ctT, splash:t.splash,
+    walls:{A: type==='kitchen'?150:96, B:120, C:120},
+    cfg:{A:{}, B:{}, C:{}},
+    fin:{door:1, cab:4, top:0, sink:0}
+  };
+  if(type==='kitchen'){ r.cfg.A={sink:true,dw:true,window:true}; r.cfg.B={range:true,fridge:true}; }
+  if(type==='bath'){ r.cfg.A={vanity:true,toilet:true}; }
+  if(type==='laundry'){ r.cfg.A={washer:true,dryer:true,sink:true}; }
+  if(type==='closet'){ r.cfg.A={shelves:true,rods:true,drawers:true}; }
+  return r;
+}
+const state = { rooms:[newRoom('kitchen')], active:0 };
+const room = () => state.rooms[state.active];
+const wallIds = r => (r=r||room(), r.shape==='single'?['A']:r.shape==='U'?['A','B','C']:['A','B']);
+const counterH = r => (r=r||room(), r.baseH + r.ctT);
+const upperBottom = r => (r=r||room(), counterH(r) + r.splash);
+const upperTop = r => (r=r||room(), upperBottom(r) + Number(r.upH));
+function corners(r, id){
+  if(r.shape==='L')  return id==='A'?{start:false,end:true}:{start:true,end:false};
+  if(r.shape==='U'){ if(id==='A')return{start:false,end:true}; if(id==='B')return{start:true,end:true}; return{start:true,end:false}; }
+  return {start:false,end:false};
+}
+
+/* ================= LAYOUT ENGINES ================= */
+function greedyFill(width, out, code, near){
+  let rem = width, first = true;
+  const std = code==='VB' ? [36,30,24,21,18,15,12] : STD;
+  while(rem >= 9){
+    let w = std.find(x=>x<=rem) || 9;
+    const c = (first && near && w>=15) ? 'D'+code+w : code+w;
+    out.push({code:c, w, type: c.startsWith('D')?'db':'base', label:c});
+    rem -= w; first = false;
+  }
+  if(rem > .01) out.push({code:'F'+Math.ceil(rem), w:rem, type:'filler', label:'FILLER'});
+}
+function towerFill(width, out, r){
+  const cfg = r.cfg; let rem = width, i = 0;
+  const useDrw = !!cfg.A.drawers;
+  while(rem >= 18){
+    const w = Math.min(24, rem);
+    const drw = useDrw && i===0;
+    out.push({code:(drw?'TWR-D':'TWR-S')+Math.round(w), w, type:'tower', label:drw?'DRW TWR':'SHELF TWR', tall:TALL_H});
+    rem -= w; i++;
+  }
+  if(rem > .01) out.push({code:'ROD'+Math.ceil(rem), w:rem, type:'rod', label:'HANG'});
+}
+function layoutWall(r, id){
+  const L = Number(r.walls[id])||0, cfg = r.cfg[id]||{}, cr = corners(r,id);
+  const items = [];
+  let usable = L - (cr.start?24:0) - (cr.end?(r.type==='kitchen'?LS:24):0);
+  if(cr.start) items.push({code:'CR', w:24, type:'corner', label:'CNR'});
+
+  const fixed = [];
+  let endTall = null, fridgeW = 0;
+
+  if(r.type==='kitchen'){
+    if(cfg.range) fixed.push({code:'RANGE', w:RANGE_W, type:'range', label:'RANGE 30"'});
+    if(cfg.sink){ if(cfg.dw) fixed.push({code:'DW', w:DW_W, type:'dw', label:'D/W'});
+      fixed.push({code:'SB'+SINK_W, w:SINK_W, type:'sink', label:'SB'+SINK_W}); }
+    fridgeW = cfg.fridge ? FR_W : 0;
+  } else if(r.type==='bath'){
+    if(cfg.toilet) fixed.push({code:'WC', w:TOILET, type:'gap', label:'W.C.'});
+    if(cfg.vanity) fixed.push({code:'VSB36', w:36, type:'sink', label:'VSB36'});
+    if(cfg.vanity2) fixed.push({code:'VSB36', w:36, type:'sink', label:'VSB36'});
+    if(cfg.linen) endTall = {code:'LIN18', w:18, type:'tall', label:'LINEN', tall:TALL_H};
+  } else if(r.type==='laundry'){
+    if(cfg.washer) fixed.push({code:'WASH', w:WD_W, type:'washer', label:'WASHER'});
+    if(cfg.dryer) fixed.push({code:'DRY', w:WD_W, type:'dryer', label:'DRYER'});
+    if(cfg.sink) fixed.push({code:'SB30', w:30, type:'sink', label:'SB30'});
+    if(cfg.tall) endTall = {code:'T18', w:18, type:'tall', label:'TALL', tall:TALL_H};
+  } else { /* closet */
+    towerFill(usable, items, r);
+    if(cr.end) items.push({code:'CR', w:24, type:'corner', label:'CNR'});
+    finish(items); const uppers = ride(items);
+    const closetSum = items.reduce((a,b)=>a+b.w,0);
+    return {items, uppers, L: Math.max(L, closetSum), overflow: Math.max(0, closetSum-L)};
+  }
+
+  const rawFill = usable - fixed.reduce((a,b)=>a+b.w,0) - fridgeW - (endTall?endTall.w:0);
+  let fill = Math.max(0, rawFill);
+  const overflow = rawFill < 0 ? -rawFill : 0;
+  const slots = fixed.length + 1, per = fill/slots;
+  const fillCode = r.type==='bath' ? 'VB' : 'B';
+  let fi = 0;
+  greedyFill(per, items, fillCode, false);
+  for(const f of fixed){ items.push(f); fi++;
+    greedyFill(fi===slots-1 ? fill - per*(slots-1) + per : per, items, fillCode, f.type==='range'); }
+  if(cr.end && r.type==='kitchen') items.push({code:'LS36', w:LS, type:'ls', label:'LS36'});
+  else if(cr.end) items.push({code:'CR', w:24, type:'corner', label:'CNR'});
+  if(endTall) items.push(endTall);
+  if(fridgeW) items.push({code:'REF', w:FR_W, type:'fridge', label:'REF 36"'});
+
+  finish(items); const uppers = ride(items);
+  /* if fixed-size fixtures (toilets, vanities, tall towers, corners) alone don't
+     fit the entered wall length, there's no fillable item left to absorb the
+     difference — grow the effective run length instead of silently overlapping
+     the adjoining wall, and surface `overflow` so the UI can warn the user. */
+  const actualSum = items.reduce((a,b)=>a+b.w,0);
+  return {items, uppers, L: Math.max(L, actualSum), overflow: Math.max(overflow, actualSum-L)};
+
+  function finish(list){
+    const sum = list.reduce((a,b)=>a+b.w,0);
+    if(Math.abs(sum-L)>.01){
+      const adj = list.filter(i=>['base','filler','rod','tower','db'].includes(i.type)).pop();
+      if(adj) adj.w += (L-sum);
+    }
+    let x=0; for(const it of list){ it.x=x; x+=it.w; }
+  }
+  function ride(list){
+    const ups = [];
+    if(!TYPES[r.type].uppers) {
+      /* bath: mirror markers over vanities, for elevation only */
+      if(r.type==='bath') for(const it of list) if(it.type==='sink') ups.push({type:'mirror', x:it.x, w:it.w, h:36, bottom:counterH(r)+8, code:''});
+      return ups;
+    }
+    const uH = Number(r.upH), uB = upperBottom(r), uT = upperTop(r);
+    for(const it of list){
+      let u = null;
+      if(it.type==='corner') u = {code:'WC24', w:24, h:uH, bottom:uB, type:'cornerU'};
+      else if(it.type==='ls') u = {code:'WC24'+r.upH, w:LS, h:uH, bottom:uB, type:'cornerU'};
+      else if(it.type==='range'){ const h=Math.max(12,uT-66); u={code:'W'+it.w+Math.round(h), w:it.w, h, bottom:66, type:'overRange'}; }
+      else if(it.type==='fridge'){ const h=Math.max(12,uT-72); u={code:'W'+it.w+Math.round(h)+'-24D', w:it.w, h, bottom:72, type:'overRef'}; }
+      else if(it.type==='tall') u = null;
+      else if(it.type==='sink' && r.cfg[id]?.window) u = {code:'', w:it.w, h:0, bottom:uB, type:'window'};
+      else if(it.type==='dw' && r.cfg[id]?.window) u = {code:'', w:it.w, h:0, bottom:uB, type:'window'};
+      else if(it.type==='filler') u = {code:'F', w:it.w, h:uH, bottom:uB, type:'fillerU'};
+      else u = {code:'W'+Math.round(it.w)+r.upH, w:it.w, h:uH, bottom:uB, type:'upper'};
+      if(u){ u.x = it.x; ups.push(u); }
+    }
+    return ups;
+  }
+}
+
+/* ================= DRAFTING HELPERS ================= */
+function ctxSetup(cv){ const c=cv.getContext('2d'); c.clearRect(0,0,cv.width,cv.height); return c; }
+function line(c,x1,y1,x2,y2,w=2,col='#1b2a3a',dash=[]){c.save();c.strokeStyle=col;c.lineWidth=w;c.setLineDash(dash);c.beginPath();c.moveTo(x1,y1);c.lineTo(x2,y2);c.stroke();c.restore();}
+function rect(c,x,y,w,h,sw=2,col='#1b2a3a',fill=null){c.save();if(fill){c.fillStyle=fill;c.fillRect(x,y,w,h);}c.strokeStyle=col;c.lineWidth=sw;c.strokeRect(x,y,w,h);c.restore();}
+function txt(c,s,x,y,size=20,col='#1b2a3a',align='center'){c.save();c.fillStyle=col;c.font=`500 ${size}px "IBM Plex Mono"`;c.textAlign=align;c.textBaseline='middle';c.fillText(s,x,y);c.restore();}
+function fmt(v){const r=Math.round(v*2)/2;return r%1===0?String(r):r.toFixed(1);}
+function dimH(c,x1,x2,y,label,size=18){ line(c,x1,y,x2,y,1.5,'#c4452c');
+  for(const x of [x1,x2]){line(c,x-6,y+6,x+6,y-6,1.5,'#c4452c');line(c,x,y-10,x,y+10,1,'#c4452c');}
+  txt(c,label,(x1+x2)/2,y-13,size,'#c4452c'); }
+function dimV(c,y1,y2,x,label,size=18){ line(c,x,y1,x,y2,1.5,'#c4452c');
+  for(const y of [y1,y2]){line(c,x-6,y+6,x+6,y-6,1.5,'#c4452c');line(c,x-10,y,x+10,y,1,'#c4452c');}
+  c.save();c.translate(x-13,(y1+y2)/2);c.rotate(-Math.PI/2);txt(c,label,0,0,size,'#c4452c');c.restore(); }
+function lum(hex){const n=parseInt(hex.slice(1),16);return (0.299*(n>>16&255)+0.587*(n>>8&255)+0.114*(n&255))/255;}
+function tint(hex,f){const n=parseInt(hex.slice(1),16);const r=n>>16&255,g=n>>8&255,b=n&255;
+  const m=v=>Math.round(v+(255-v)*f); return `rgb(${m(r)},${m(g)},${m(b)})`;}
+
+/* door style detail inside a 2D box */
+function doorDetail(c,x,y,w,h,style,scale){
+  const i = 3.5*scale; if(w<5*i||h<5*i) return;
+  if(style>=1) rect(c,x+i,y+i,w-2*i,h-2*i,1.3,'#00000033');
+  if(style===2) rect(c,x+i*1.8,y+i*1.8,w-3.6*i,h-3.6*i,1,'#00000026');
+}
+
+/* ================= PLAN VIEW ================= */
+function drawPlan(){
+  const r = room(), cv=$('cvPlan'), c=ctxSetup(cv);
+  const ids = wallIds(r), bd=r.baseD;
+  const lays={}; ids.forEach(i=>lays[i]=layoutWall(r,i));
+  const A=lays.A, B=lays.B, C=lays.C;
+  let W,H;
+  if(r.shape==='single'){W=A.L;H=Math.max(60,bd*2.2);}
+  else if(r.shape==='L'){W=A.L;H=B.L;}
+  else if(r.shape==='galley'){W=Math.max(A.L,B.L);H=Math.max(100,bd*4);}
+  else {W=B.L;H=Math.max(A.L,C.L);}
+  const pad=130, s=Math.min((cv.width-2*pad)/W,(cv.height-2*pad)/H);
+  const ox=(cv.width-W*s)/2, oy=(cv.height-H*s)/2, X=v=>ox+v*s, Y=v=>oy+v*s;
+  const cabF = tint(CABCOL[r.fin.cab].h,.72);
+
+  function decorate(it,x,y,w,h,horiz){
+    if(it.type==='sink'){ rect(c,x+w*.2,y+h*.22,w*.6,h*.5,1.5,'#5d6d80');
+      if(r.type==='kitchen'&&r.fin.sink===1) line(c,x+w*.5,y+h*.22,x+w*.5,y+h*.72,1.5,'#5d6d80'); }
+    if(it.type==='range'){ for(let i=0;i<4;i++){const bx=x+w*(.28+(i%2)*.44),by=y+h*(.3+Math.floor(i/2)*.4);
+      c.beginPath();c.arc(bx,by,Math.min(w,h)*.11,0,7);c.strokeStyle='#5d6d80';c.lineWidth=1.5;c.stroke();} }
+    if(it.type==='washer'||it.type==='dryer'){ c.beginPath();c.arc(x+w/2,y+h/2,Math.min(w,h)*.28,0,7);c.strokeStyle='#5d6d80';c.lineWidth=1.5;c.stroke(); }
+    if(it.type==='gap'){ /* toilet symbol */ c.save();c.strokeStyle='#5d6d80';c.lineWidth=1.5;
+      c.beginPath();c.ellipse(x+w/2,y+h*.62,w*.22,h*.26,0,0,7);c.stroke();
+      c.strokeRect(x+w*.28,y+h*.1,w*.44,h*.2);c.restore(); }
+    if(it.type==='rod'){ line(c,x+4,y+h*.5,x+w-4,y+h*.5,2,'#5d6d80',[10,6]); }
+  }
+  function runH(lay,yTop,flip){
+    rect(c,X(0),Y(yTop)-(flip?0:6),lay.L*s,6,2,'#1b2a3a','#1b2a3a');
+    for(const it of lay.items){
+      const x=X(it.x), w=it.w*s, y=flip?Y(yTop)-bd*s:Y(yTop), h=bd*s;
+      const fill = ['fridge','range','washer','dryer'].includes(it.type)?'#f3e9e6': it.type==='gap'?'#fff': it.type==='filler'?'#e6ebef': cabF;
+      rect(c,x,y,w,h,2,'#1b2a3a', it.type==='gap'?null:fill);
+      if(it.type!=='filler'&&it.type!=='gap') txt(c,it.label,x+w/2,y+h/2,Math.min(16,w/3.6));
+      decorate(it,x,y,w,h,true);
+    }
+    if(r.type!=='closet'){
+      const ce=flip?Y(yTop)-(bd+1.5)*s:Y(yTop)+(bd+1.5)*s; line(c,X(0),ce,X(lay.L),ce,1.5,'#8b7c55');
+      if(TYPES[r.type].uppers){const ue=flip?Y(yTop)-r.upD*s:Y(yTop)+r.upD*s; line(c,X(0),ue,X(lay.L),ue,1.5,'#5d6d80',[8,6]);}
+    }
+    dimH(c,X(0),X(lay.L),flip?Y(yTop)+40:Y(yTop)-40,fmt(lay.L)+'"');
+  }
+  function runV(lay,xSide,rt){
+    rect(c,X(xSide)-(rt?0:6),Y(0),6,lay.L*s,2,'#1b2a3a','#1b2a3a');
+    for(const it of lay.items){
+      const y=Y(it.x), h=it.w*s, x=rt?X(xSide)-bd*s:X(xSide), w=bd*s;
+      const fill = ['fridge','range','washer','dryer'].includes(it.type)?'#f3e9e6': it.type==='gap'?'#fff': it.type==='filler'?'#e6ebef': cabF;
+      rect(c,x,y,w,h,2,'#1b2a3a', it.type==='gap'?null:fill);
+      if(it.type!=='filler'&&it.type!=='gap'){c.save();c.translate(x+w/2,y+h/2);c.rotate(rt?-Math.PI/2:Math.PI/2);txt(c,it.label,0,0,Math.min(16,h/3.6));c.restore();}
+      decorate(it,x,y,w,h,false);
+    }
+    if(r.type!=='closet'){
+      const ce=rt?X(xSide)-(bd+1.5)*s:X(xSide)+(bd+1.5)*s; line(c,ce,Y(0),ce,Y(lay.L),1.5,'#8b7c55');
+      if(TYPES[r.type].uppers){const ue=rt?X(xSide)-r.upD*s:X(xSide)+r.upD*s; line(c,ue,Y(0),ue,Y(lay.L),1.5,'#5d6d80',[8,6]);}
+    }
+    dimV(c,Y(0),Y(lay.L),rt?X(xSide)+40:X(xSide)-40,fmt(lay.L)+'"');
+  }
+  if(r.shape==='single') runH(A,0,false);
+  else if(r.shape==='L'){runH(A,0,false);runV(B,0,false);}
+  else if(r.shape==='galley'){runH(A,0,false);runH(B,H,true);}
+  else {runH(B,0,false);runV(A,0,false);runV(C,W,true);}
+
+  txt(c, r.name.toUpperCase()+' — PLAN', X(W/2), Y(0)-82, 20, '#5d6d80');
+  line(c,60,cv.height-46,118,cv.height-46,1.5,'#5d6d80',[8,6]);
+  txt(c,'= uppers (dashed)   —— counter edge',132,cv.height-46,15,'#5d6d80','left');
+}
+
+/* ================= ELEVATION ================= */
+let elevWall='A';
+function drawElev(){
+  const r=room(), cv=$('cvElev'), c=ctxSetup(cv);
+  const lay=layoutWall(r,elevWall), ceil=Number(r.ceil), L=lay.L||1;
+  const pad=150, s=Math.min((cv.width-2*pad)/L,(cv.height-2*pad)/ceil);
+  const ox=(cv.width-L*s)/2, oy=(cv.height+ceil*s)/2, X=v=>ox+v*s, Yf=v=>oy-v*s;
+  const cab = CABCOL[r.fin.cab].h, cabF=tint(cab,.15), tcol = lum(cab)>.5?'#1b2a3a':'#ffffff';
+  const topF = TOPCOL[r.fin.top].h;
+  const dstyle = r.fin.door;
+
+  line(c,X(-8),Yf(0),X(L+8),Yf(0),3); line(c,X(-8),Yf(ceil),X(L+8),Yf(ceil),3);
+  const bH=r.baseH, toe=r.toe, ctH=counterH(r);
+
+  for(const it of lay.items){
+    const x=X(it.x), w=it.w*s;
+    if(it.type==='fridge'){ rect(c,x,Yf(FR_H),w,FR_H*s,2,'#1b2a3a','#f3e9e6');
+      line(c,x+w*.55,Yf(FR_H),x+w*.55,Yf(0),1.5,'#5d6d80'); txt(c,'REF',x+w/2,Yf(FR_H/2),18,'#5d6d80'); continue; }
+    if(it.type==='range'){ rect(c,x,Yf(36),w,36*s,2,'#1b2a3a','#f3e9e6'); txt(c,'RANGE',x+w/2,Yf(18),16,'#5d6d80'); continue; }
+    if(it.type==='washer'||it.type==='dryer'){ rect(c,x,Yf(WD_H),w,WD_H*s,2,'#1b2a3a','#f3e9e6');
+      c.beginPath();c.arc(x+w/2,Yf(WD_H*.45),w*.3,0,7);c.strokeStyle='#5d6d80';c.lineWidth=2;c.stroke();
+      txt(c,it.label,x+w/2,Yf(WD_H+4)+(-14),13,'#5d6d80'); dimH(c,x,x+w,Yf(0)+34,fmt(it.w)+'"',15); continue; }
+    if(it.type==='gap'){ c.save();c.strokeStyle='#5d6d80';c.lineWidth=2;
+      c.strokeRect(x+w*.25,Yf(30),w*.5,15*s); c.beginPath();c.ellipse(x+w/2,Yf(9),w*.26,8*s,0,0,7);c.stroke();c.restore();
+      txt(c,'W.C.',x+w/2,Yf(34)-14,13,'#5d6d80'); dimH(c,x,x+w,Yf(0)+34,fmt(it.w)+'"',15); continue; }
+    if(it.type==='tall'||it.type==='tower'){
+      rect(c,x,Yf(it.tall),w,it.tall*s,2,'#1b2a3a',cabF);
+      if(it.type==='tower'){ for(let sh=12; sh<it.tall-6; sh+=12) line(c,x+3,Yf(sh),x+w-3,Yf(sh),1.3,'#00000033');
+        if(it.label==='DRW TWR') for(let sh=6; sh<=30; sh+=8) line(c,x+3,Yf(sh),x+w-3,Yf(sh),1.6,'#00000044'); }
+      else doorDetail(c,x,Yf(it.tall),w,it.tall*s,dstyle,s);
+      txt(c,it.label,x+w/2,Yf(it.tall+4)-12,13,'#5d6d80');
+      dimH(c,x,x+w,Yf(0)+34,fmt(it.w)+'"',14); continue; }
+    if(it.type==='rod'){ line(c,x+4,Yf(66),x+w-4,Yf(66),3,'#5d6d80');
+      line(c,x+4,Yf(33),x+w-4,Yf(33),3,'#5d6d80'); txt(c,'DBL HANG',x+w/2,Yf(70)-14,13,'#5d6d80');
+      dimH(c,x,x+w,Yf(0)+34,fmt(it.w)+'"',14); continue; }
+    if(it.type==='corner'){ rect(c,x,Yf(bH||30),w,((bH||30)-toe)*s,2,'#1b2a3a','#e6ebef');
+      txt(c,'CNR',x+w/2,Yf((bH||30)/2),13,'#5d6d80'); continue; }
+    /* standard base / sink / dw / db / ls / filler */
+    if(toe>0) rect(c,x+(it.type==='filler'?0:6),Yf(toe),w-(it.type==='filler'?0:12),toe*s,1.5,'#1b2a3a');
+    rect(c,x,Yf(bH),w,(bH-toe)*s,2,'#1b2a3a', it.type==='filler'?'#e6ebef':cabF);
+    if(it.type==='dw'){ txt(c,'D/W',x+w/2,Yf(bH/2+toe/2),18,tcol); }
+    else if(it.type!=='filler'){
+      line(c,x,Yf(bH-6),x+w,Yf(bH-6),1.5);
+      const dy=Yf(bH-6), dh=(bH-6-toe)*s;
+      if(it.type==='db'){ line(c,x,Yf(toe+(bH-toe)/3),x+w,Yf(toe+(bH-toe)/3),1.5); line(c,x,Yf(toe+2*(bH-toe)/3),x+w,Yf(toe+2*(bH-toe)/3),1.5); }
+      else if(it.w>=27){ line(c,x+w/2,dy,x+w/2,Yf(toe),1.5); doorDetail(c,x,dy,w/2,dh,dstyle,s); doorDetail(c,x+w/2,dy,w/2,dh,dstyle,s); }
+      else doorDetail(c,x,dy,w,dh,dstyle,s);
+      txt(c,it.label,x+w/2,Yf((bH+toe)/2-3),Math.min(17,w/3.4),tcol);
+      dimH(c,x,x+w,Yf(0)+34,fmt(it.w)+'"',15);
+    } else dimH(c,x,x+w,Yf(0)+34,fmt(it.w)+'"',13);
+  }
+  /* countertop */
+  if(r.type!=='closet'){
+    const span=lay.items.filter(i=>!['fridge','tall','gap','washer','dryer','tower','rod'].includes(i.type));
+    if(span.length){ const cx1=X(span[0].x), cx2=X(span[span.length-1].x+span[span.length-1].w);
+      rect(c,cx1-4,Yf(ctH),cx2-cx1+8,Math.max(2,r.ctT*s),2,'#1b2a3a',topF); }
+  }
+  /* uppers & mirrors */
+  for(const u of (lay.uppers||[])){
+    const x=X(u.x), w=u.w*s;
+    if(u.type==='mirror'){ rect(c,x+w*.12,Yf(u.bottom+u.h),w*.76,u.h*s,2,'#5d6d80','#eef4f8');
+      line(c,x+w*.2,Yf(u.bottom+u.h*.85),x+w*.5,Yf(u.bottom+u.h*.3),1.2,'#b9c8d4'); txt(c,'MIRROR',x+w/2,Yf(u.bottom+u.h/2)+0,13,'#5d6d80'); continue; }
+    if(u.type==='window'){ rect(c,x+w*.1,Yf(upperTop(r)),w*.8,Number(r.upH)*s,1.5,'#5d6d80');
+      line(c,x+w*.5,Yf(upperTop(r)),x+w*.5,Yf(upperBottom(r)),1,'#5d6d80'); txt(c,'WINDOW',x+w/2,Yf(upperBottom(r)+r.upH/2)+18,13,'#5d6d80'); continue; }
+    if(u.h<=0) continue;
+    rect(c,x,Yf(u.bottom+u.h),w,u.h*s,2,'#1b2a3a', u.type==='fillerU'?'#e6ebef':cabF);
+    if(u.type!=='fillerU'){
+      if(u.w>=27){ line(c,x+w/2,Yf(u.bottom+u.h),x+w/2,Yf(u.bottom),1.5);
+        doorDetail(c,x,Yf(u.bottom+u.h),w/2,u.h*s,dstyle,s); doorDetail(c,x+w/2,Yf(u.bottom+u.h),w/2,u.h*s,dstyle,s); }
+      else doorDetail(c,x,Yf(u.bottom+u.h),w,u.h*s,dstyle,s);
+      txt(c,u.code,x+w/2,Yf(u.bottom+u.h/2),Math.min(15,w/3.8),tcol);
+    }
+  }
+  /* dims */
+  const dx=X(0)-56;
+  if(r.baseH>0){ dimV(c,Yf(r.baseH),Yf(0),dx,fmt(r.baseH)+'"');
+    if(TYPES[r.type].uppers){ dimV(c,Yf(upperBottom(r)),Yf(ctH),dx,fmt(r.splash)+'"'); dimV(c,Yf(upperTop(r)),Yf(upperBottom(r)),dx,fmt(r.upH)+'"'); } }
+  dimV(c,Yf(ceil),Yf(0),X(0)-110,fmt(ceil)+'"');
+  dimH(c,X(0),X(L),Yf(0)+76,fmt(L)+'" OVERALL');
+  txt(c,(r.name+' — ELEVATION, WALL '+elevWall).toUpperCase(),cv.width/2,44,22);
+  txt(c,`${DOORS[r.fin.door]} door · ${CABCOL[r.fin.cab].n} · ${TOPCOL[r.fin.top].n}${TYPES[r.type].sinks[r.fin.sink]?' · '+TYPES[r.type].sinks[r.fin.sink]:''}`,cv.width/2,72,15,'#5d6d80');
+}
+
+/* ================= 3D ================= */
+let three=null;
+function draw3D(){
+  const r=room(), cv=$('cv3d');
+  if(!window.THREE) return;
+  if(!three){
+    const renderer=new THREE.WebGLRenderer({canvas:cv,antialias:true});
+    renderer.setSize(cv.width,cv.height,false);
+    const scene=new THREE.Scene(); scene.background=new THREE.Color(0xeef1f4);
+    const cam=new THREE.PerspectiveCamera(45,cv.width/cv.height,1,5000);
+    scene.add(new THREE.AmbientLight(0xffffff,.62));
+    const sun=new THREE.DirectionalLight(0xffffff,.72); sun.position.set(220,420,320); scene.add(sun);
+    three={renderer,scene,cam,group:null,theta:-.7,phi:1.15,r:0,center:new THREE.Vector3()};
+    let drag=false,lx=0,ly=0;
+    cv.addEventListener('mousedown',e=>{drag=true;lx=e.clientX;ly=e.clientY;});
+    window.addEventListener('mouseup',()=>drag=false);
+    window.addEventListener('mousemove',e=>{if(!drag)return;three.theta-=(e.clientX-lx)*.006;
+      three.phi=Math.min(1.5,Math.max(.2,three.phi-(e.clientY-ly)*.006));lx=e.clientX;ly=e.clientY;placeCam();});
+    cv.addEventListener('wheel',e=>{e.preventDefault();three.r=Math.max(120,Math.min(2500,three.r*(1+e.deltaY*.001)));placeCam();},{passive:false});
+    (function loop(){requestAnimationFrame(loop);three.renderer.render(three.scene,three.cam);})();
+  }
+  if(three.group) three.scene.remove(three.group);
+  const g=new THREE.Group(); three.group=g;
+
+  const cabHex=parseInt(CABCOL[r.fin.cab].h.slice(1),16), topHex=parseInt(TOPCOL[r.fin.top].h.slice(1),16);
+  const mCab=new THREE.MeshLambertMaterial({color:cabHex});
+  const mCabD=new THREE.MeshLambertMaterial({color:new THREE.Color(cabHex).multiplyScalar(.82)});
+  const mCabL=new THREE.MeshLambertMaterial({color:new THREE.Color(cabHex).multiplyScalar(1.12)});
+  const mTop=new THREE.MeshLambertMaterial({color:topHex});
+  const mAppl=new THREE.MeshLambertMaterial({color:0xb9c2cb});
+  const mWall=new THREE.MeshLambertMaterial({color:0xf5f2ec});
+  const mFlr=new THREE.MeshLambertMaterial({color:0xd8cdbd});
+  const mMir=new THREE.MeshLambertMaterial({color:0xcfe0ea});
+  const edgeCol=lum(CABCOL[r.fin.cab].h)>.5?0x6b6b66:0x1f1a14;
+  const edge=geo=>new THREE.LineSegments(new THREE.EdgesGeometry(geo),new THREE.LineBasicMaterial({color:edgeCol}));
+
+  const ids=wallIds(r), bd=r.baseD, ud=r.upD, ceil=Number(r.ceil);
+  const lays={}; ids.forEach(i=>lays[i]=layoutWall(r,i));
+  let W,D;
+  if(r.shape==='single'){W=lays.A.L;D=Math.max(80,bd*3);}
+  else if(r.shape==='L'){W=lays.A.L;D=lays.B.L;}
+  else if(r.shape==='galley'){W=Math.max(lays.A.L,lays.B.L);D=Math.max(100,bd*4.2);}
+  else {W=lays.B.L;D=Math.max(lays.A.L,lays.C.L);}
+
+  {const geo=new THREE.BoxGeometry(W,4,D);const m=new THREE.Mesh(geo,mFlr);m.position.set(W/2,-2,D/2);g.add(m);}
+
+  function placeRun(lay,orient){
+    function pos(t,off){ if(orient==='back')return[t,off]; if(orient==='front')return[W-t,D-off];
+      if(orient==='left')return[off,t]; return [W-off, D-lay.L + t]; }
+    const rotY=(orient==='left'||orient==='right')?Math.PI/2:0;
+    function put(w,h,d,t,yC,off,mat,edges=true){
+      const [px,pz]=pos(t+w/2,off+d/2);
+      const geo=new THREE.BoxGeometry(w,h,d); const m=new THREE.Mesh(geo,mat);
+      m.position.set(px,yC,pz); m.rotation.y=rotY; g.add(m);
+      if(edges){const e=edge(geo);e.position.copy(m.position);e.rotation.copy(m.rotation);g.add(e);}
+      return m;
+    }
+    function doorFace(w,h,t,yC,frontOff){ /* panel-style detail on the door face */
+      if(r.fin.door===0) return;
+      const inset=Math.min(3,w*.14), pw=w-2*inset, ph=h-2*inset;
+      if(pw<3||ph<3) return;
+      const raised = r.fin.door===2;
+      put(pw, ph, .7, t+inset, yC, frontOff + (raised? .3 : -.45), raised?mCabL:mCabD, false);
+    }
+    {const geo=new THREE.BoxGeometry(lay.L,ceil,5);const m=new THREE.Mesh(geo,mWall);
+     const [px,pz]=pos(lay.L/2,-2.5); m.position.set(px,ceil/2,pz); m.rotation.y=rotY; g.add(m);}
+    for(const it of lay.items){
+      if(it.type==='fridge'){put(it.w-2,FR_H,30,it.x+1,FR_H/2,0,mAppl);continue;}
+      if(it.type==='range'){put(it.w-1,36,26,it.x+.5,18,0,mAppl);continue;}
+      if(it.type==='washer'||it.type==='dryer'){put(it.w-1,WD_H,28,it.x+.5,WD_H/2,0,mAppl);continue;}
+      if(it.type==='gap'){put(16,15,20,it.x+(it.w-16)/2,7.5,2,mAppl);put(14,14,7,it.x+(it.w-14)/2,22,0,mAppl);continue;}
+      if(it.type==='tall'||it.type==='tower'){
+        put(it.w-.5,it.tall,bd,it.x+.25,it.tall/2,0,mCab);
+        if(it.type==='tall') doorFace(it.w-.5,it.tall-4,it.x+.25,it.tall/2,bd);
+        continue; }
+      if(it.type==='rod'){ /* open hang: rod cylinders */
+        for(const hh of [66,33]){ const geo=new THREE.CylinderGeometry(.8,.8,it.w-2,10);
+          const m=new THREE.Mesh(geo,mAppl); const [px,pz]=pos(it.x+it.w/2, bd/2);
+          m.position.set(px,hh,pz); m.rotation.z=(rotY===0)?Math.PI/2:0; m.rotation.x=(rotY===0)?0:Math.PI/2; g.add(m); }
+        put(it.w,2,bd,it.x,TALL_H,0,mCab); continue; }
+      /* base cabinet */
+      const bh=r.baseH-r.toe;
+      put(it.w-.5,bh,bd,it.x+.25,r.toe+bh/2,0,it.type==='dw'?mAppl:mCab);
+      if(it.type!=='dw'&&it.type!=='filler'&&it.type!=='corner') doorFace(it.w-.5,bh-3,it.x+.25,r.toe+bh/2,bd);
+      if(r.toe>0) put(it.w-6,r.toe,bd-3,it.x+3,r.toe/2,0,mCabD,false);
+    }
+    if(r.type!=='closet'){
+      const span=lay.items.filter(i=>!['fridge','tall','gap','washer','dryer','tower','rod'].includes(i.type));
+      if(span.length){const t0=span[0].x,t1=span[span.length-1].x+span[span.length-1].w;
+        put(t1-t0,Math.max(1,r.ctT),bd+1.5,t0,counterH(r)-r.ctT/2,0,mTop);
+        if(it_sink(span)) sinkCut(span); }
+      function it_sink(sp){return sp.some(i=>i.type==='sink');}
+      function sinkCut(sp){ for(const i of sp) if(i.type==='sink'){
+        put(i.w*.6,1.2,bd*.55,i.x+i.w*.2,counterH(r)+.4,bd*.18,mAppl,false);
+        if(r.type==='bath'&&r.fin.sink===1) put(i.w*.42,4,i.w*.42>bd*.5?bd*.5:i.w*.42,i.x+i.w*.29,counterH(r)+2,bd*.22,mAppl,false); } }
+    }
+    for(const u of (lay.uppers||[])){
+      if(u.type==='mirror'){put(u.w*.76,u.h,1.2,u.x+u.w*.12,u.bottom+u.h/2,-1.2+2,mMir,false);continue;}
+      if(u.h<=0||u.type==='window'||u.type==='fillerU')continue;
+      const d=u.type==='overRef'?24:ud;
+      put(u.w-.5,u.h,d,u.x+.25,u.bottom+u.h/2,0,mCab);
+      doorFace(u.w-.5,u.h-3,u.x+.25,u.bottom+u.h/2,d);
+    }
+  }
+  if(r.shape==='single')placeRun(lays.A,'back');
+  else if(r.shape==='L'){placeRun(lays.A,'back');placeRun(lays.B,'left');}
+  else if(r.shape==='galley'){placeRun(lays.A,'back');placeRun(lays.B,'front');}
+  else {placeRun(lays.B,'back');placeRun(lays.A,'left');placeRun(lays.C,'right');}
+
+  three.scene.add(g);
+  three.center.set(W/2,42,D/2);
+  three.r = Math.max(W,D)*1.7;
+  placeCam();
+}
+function placeCam(){ if(!three)return; const {theta,phi,r,center}=three;
+  three.cam.position.set(center.x+r*Math.sin(phi)*Math.sin(theta), center.y+r*Math.cos(phi), center.z+r*Math.sin(phi)*Math.cos(theta));
+  three.cam.lookAt(center); }
+
+/* ================= SCHEDULE ================= */
+function buildSchedule(r){
+  const rows={}; let baseLF=0, upperLF=0, tallN=0;
+  for(const id of wallIds(r)){
+    const lay=layoutWall(r,id);
+    for(const it of lay.items){
+      if(['range','fridge','dw','corner','filler','gap','washer','dryer','rod'].includes(it.type)) continue;
+      const tall=it.type==='tall'||it.type==='tower';
+      const h=tall?it.tall:r.baseH, d=r.baseD, k=it.code;
+      rows[k]=rows[k]||{code:k,kind:tall?'Tall':'Base',w:it.w,h,d,qty:0,walls:new Set()};
+      rows[k].qty++; rows[k].walls.add(id);
+      if(tall) tallN++; else baseLF+=it.w;
+    }
+    for(const u of (lay.uppers||[])){
+      if(!u.code||u.code==='F'||u.h<=0||u.type==='mirror') continue;
+      const d=u.type==='overRef'?24:r.upD, k=u.code;
+      rows[k]=rows[k]||{code:k,kind:'Wall',w:u.w,h:u.h,d,qty:0,walls:new Set()};
+      rows[k].qty++; rows[k].walls.add(id); upperLF+=u.w;
+    }
+  }
+  const order={Base:0,Tall:1,Wall:2};
+  return {rows:Object.values(rows).sort((a,b)=>order[a.kind]-order[b.kind]||a.code.localeCompare(b.code)),baseLF,upperLF,tallN};
+}
+function finLine(r){ return `${DOORS[r.fin.door]} doors · ${CABCOL[r.fin.cab].n} · ${TOPCOL[r.fin.top].n}${TYPES[r.type].sinks[r.fin.sink]?' · '+TYPES[r.type].sinks[r.fin.sink]:''}`; }
+function drawSchedule(){
+  const r=room(), {rows,baseLF,upperLF,tallN}=buildSchedule(r);
+  let html='<table><tr><th>Code</th><th>Type</th><th>Qty</th><th>W (in)</th><th>H (in)</th><th>D (in)</th><th>Wall</th></tr>', last='';
+  for(const q of rows){
+    if(q.kind!==last){html+=`<tr class="grp"><td colspan="7">${q.kind} cabinets</td></tr>`;last=q.kind;}
+    html+=`<tr><td>${q.code}</td><td>${q.kind}</td><td>${q.qty}</td><td>${fmt(q.w)}</td><td>${fmt(q.h)}</td><td>${fmt(q.d)}</td><td>${[...q.walls].join(', ')}</td></tr>`;
+  }
+  html+='</table>';
+  $('schedTbl').innerHTML=html;
+  $('schedTot').textContent=`${r.name}: base ${(baseLF/12).toFixed(1)} LF · uppers ${(upperLF/12).toFixed(1)} LF · tall ×${tallN}  |  ${finLine(r)}`;
+}
+function csv(){
+  let out='Room,Code,Type,Qty,Width_in,Height_in,Depth_in,Walls,Finish\n';
+  for(const r of state.rooms){ const {rows}=buildSchedule(r);
+    for(const q of rows) out+=`${r.name},${q.code},${q.kind},${q.qty},${fmt(q.w)},${fmt(q.h)},${fmt(q.d)},"${[...q.walls].join(' ')}","${finLine(r)}"\n`; }
+  navigator.clipboard.writeText(out).then(()=>alert('Full project schedule copied — paste into email or a spreadsheet for the shop.'));
+}
+
+/* ================= AI PLAN TAKEOFF ================= */
+const planFiles=[];
+$('drop').addEventListener('click',()=>$('planIn').click());
+['dragover','dragleave','drop'].forEach(ev=>$('drop').addEventListener(ev,e=>{
+  e.preventDefault(); $('drop').classList.toggle('hot',ev==='dragover');
+  if(ev==='drop') addPlans(e.dataTransfer.files);
+}));
+$('planIn').addEventListener('change',e=>{addPlans(e.target.files);e.target.value='';});
+function addPlans(fl){ for(const f of fl) planFiles.push(f);
+  $('planList').innerHTML=planFiles.map(f=>`<span>${f.name}</span>`).join(''); }
+function b64(file){ return new Promise((res,rej)=>{const r=new FileReader();
+  r.onload=()=>res(r.result.split(',')[1]); r.onerror=rej; r.readAsDataURL(file);}); }
+function setStatus(msg, isErr){ const el=$('aiStatus'); el.textContent=msg; el.style.color=isErr?'var(--dim)':''; el.style.fontWeight=isErr?'700':''; }
+
+/* pass 1 — scan every page of the whole home and think about where built-ins belong,
+   not just pages already labeled "kitchen"/"bath" */
+const LOCATE_PROMPT = `You are a cabinet-industry estimator scanning a full residential construction drawing set (every page attached, in order) to find every place in the home that would need built-in cabinetry.
+
+Think like an estimator walking the whole plan, not just the obviously-labeled rooms. Flag:
+- Kitchens, bathrooms (incl. powder rooms), laundry/mud rooms, closets, pantries — the obvious ones.
+- Anywhere else a cabinet shop would typically quote built-ins: wet bars, butler's pantries, mudroom lockers/benches, home-office built-ins, entry consoles, media-wall/entertainment built-ins, garage or basement storage walls, linen closets, wine storage.
+- Skip spaces with no built-in cabinetry shown (bedrooms with no closet detail, open living rooms, garages with nothing built in, cover sheets, elevations/sections with no plan view).
+
+Respond with ONLY valid JSON, no markdown fences, no commentary:
+{"hits":[
+  {"page":3,"name":"Kitchen","type":"kitchen","bbox":[0.04,0.58,0.49,0.94]},
+  {"page":3,"name":"Mudroom","type":"closet","bbox":[0.52,0.60,0.71,0.90]}
+]}
+Rules:
+- "page" is the 1-indexed page number among the images given, in the order given.
+- "type" is whichever of these four the space is CLOSEST to for layout purposes — pick the nearest fit, don't invent new types:
+  kitchen (sink+range/fridge run, or a wet bar/butler's pantry with a sink),
+  bath (vanity/sink + fixtures, incl. powder rooms),
+  laundry (washer/dryer/utility sink),
+  closet (built-in storage with no plumbing fixture — pantries, mudroom lockers, linen, office built-ins, media walls, garage storage).
+- "bbox" is normalized [x0,y0,x1,y1], 0–1 fractions of the page, tightly cropping that room's plan with a small margin.
+- Include a space even if you're not fully certain — a person reviews every result before anything is priced.`;
+
+/* pass 2 — read exact dimensions off a page (or a tight high-res crop from pass 1) */
+const TAKEOFF_PROMPT = `You are a cabinet-industry estimator doing a takeoff from residential construction plans.
+Some images may carry a short caption guessing the room from an earlier scanning pass — verify that guess against what you actually see and correct it if it's wrong.
+For each room, read the dimension strings (or scale from labeled dimensions) and report the cabinet-bearing walls.
+
+Respond with ONLY valid JSON, no markdown fences, no commentary, in exactly this shape:
+{"rooms":[
+ {"name":"Kitchen","type":"kitchen","shape":"L","ceiling":96,
+  "walls":{"A":150,"B":126,"C":0},
+  "fixtures":{"A":{"sink":true,"dw":true,"window":true},"B":{"range":true,"fridge":true}},
+  "notes":"anything ambiguous"}
+]}
+Rules:
+- type is one of: kitchen, bath, laundry, closet — pick the nearest fit for non-standard spaces (wet bar/butler's pantry → kitchen, mudroom/pantry/office built-ins/media wall → closet, powder room → bath).
+- shape is one of: single, L, galley, U. Wall A first; for L, A is the longer leg; for U, B is the back wall.
+- All wall lengths in INCHES along the face that receives cabinets. Omit or set 0 for unused walls.
+- fixtures keys by room type — kitchen: sink, dw, range, fridge, window · bath: vanity, vanity2, linen, toilet · laundry: washer, dryer, sink, tall · closet: drawers, shelves, rods.
+- If a dimension is not legible, estimate from scale and say so in notes. Never invent rooms.`;
+
+/* shrink photos client-side so uploads are fast and fit serverless limits */
+function compressImage(file){
+  return new Promise((res)=>{
+    const img=new Image();
+    img.onload=()=>{
+      const MAX=1800, sc=Math.min(1,MAX/Math.max(img.width,img.height));
+      const cv=document.createElement('canvas');
+      cv.width=Math.round(img.width*sc); cv.height=Math.round(img.height*sc);
+      cv.getContext('2d').drawImage(img,0,0,cv.width,cv.height);
+      res({media_type:'image/jpeg', data:cv.toDataURL('image/jpeg',.85).split(',')[1], kind:'image'});
+    };
+    img.onerror=()=>b64(file).then(data=>res({media_type:file.type,data,kind:'image'}));
+    img.src=URL.createObjectURL(file);
+  });
+}
+/* render one PDF page to a canvas at a chosen max dimension — this is what lets us
+   read tiny dimension text on a big architectural sheet: we control the DPI instead
+   of relying on the API's fixed internal downscale of a raw PDF page */
+async function renderPdfPage(pdf, pageNum, maxDim){
+  const page = await pdf.getPage(pageNum);
+  const vp0 = page.getViewport({scale:1});
+  const scale = maxDim/Math.max(vp0.width, vp0.height);
+  const viewport = page.getViewport({scale});
+  const cv = document.createElement('canvas');
+  cv.width = Math.ceil(viewport.width); cv.height = Math.ceil(viewport.height);
+  await page.render({canvasContext:cv.getContext('2d'), viewport}).promise;
+  return cv;
+}
+function cropCanvas(cv, bbox, margin=0.08){
+  let [x0,y0,x1,y1] = bbox.map(Number);
+  if([x0,y0,x1,y1].some(v=>!isFinite(v))) return cv;
+  x0=Math.max(0,Math.min(1,x0)); y0=Math.max(0,Math.min(1,y0));
+  x1=Math.max(0,Math.min(1,x1)); y1=Math.max(0,Math.min(1,y1));
+  if(x1<=x0) x1=Math.min(1,x0+0.1);
+  if(y1<=y0) y1=Math.min(1,y0+0.1);
+  const mx=(x1-x0)*margin, my=(y1-y0)*margin;
+  const cx0=Math.max(0,x0-mx)*cv.width, cy0=Math.max(0,y0-my)*cv.height;
+  const cx1=Math.min(1,x1+mx)*cv.width, cy1=Math.min(1,y1+my)*cv.height;
+  const w=Math.max(1,Math.round(cx1-cx0)), h=Math.max(1,Math.round(cy1-cy0));
+  const out=document.createElement('canvas'); out.width=w; out.height=h;
+  out.getContext('2d').drawImage(cv, cx0,cy0,cx1-cx0,cy1-cy0, 0,0,w,h);
+  return out;
+}
+function canvasJpeg(cv,q){ return cv.toDataURL('image/jpeg',q).split(',')[1]; }
+
+/* the model is told to reply with ONLY JSON, but strip stray commentary it
+   sometimes adds anyway by grabbing the outermost {...} block */
+function extractJson(text){
+  let s=String(text||'').replace(/```json|```/g,'').trim();
+  const i=s.indexOf('{'), j=s.lastIndexOf('}');
+  if(i!==-1 && j!==-1 && j>i) s=s.slice(i,j+1);
+  return s;
+}
+function handleTakeoffText(text){
+  const clean=extractJson(text);
+  try{
+    JSON.parse(clean);
+    $('aiJson').value=clean;
+    setStatus('Done — review the numbers below, then apply.');
+  }catch(e){
+    console.error('takeoff JSON parse failed', e, text);
+    $('aiJson').value=text||'';
+    setStatus('The AI reply wasn\'t valid JSON — the raw response is in the box below so you can fix it by hand, or just re-run the takeoff.', true);
+  }
+}
+
+/* tries this site's own serverless function first (no key needed for visitors),
+   falls back to a personal API key for local testing — same for both passes */
+async function callAI(mode, files){
+  const endpoint = mode==='locate' ? '/.netlify/functions/locate' : '/.netlify/functions/takeoff';
+  const prompt = mode==='locate' ? LOCATE_PROMPT : TAKEOFF_PROMPT;
+  const maxTok = mode==='locate' ? 2000 : 4096;
+  try{
+    const resp=await fetch(endpoint,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({files})});
+    if(resp.ok){ const d=await resp.json(); if(d.error) throw new Error(d.error); return d.text||''; }
+    if(resp.status!==404 && resp.status!==405){
+      const d=await resp.json().catch(()=>({}));
+      throw new Error(d.error||('server error '+resp.status));
+    }
+    /* 404/405 → function not deployed here (e.g. opened as a local file) → try personal key */
+  }catch(err){
+    if(!(err instanceof TypeError)) throw err; /* TypeError = network/local-file, fall through */
+  }
+  const key=$('apiKey').value.trim();
+  if(!key) throw new Error('The site\'s analysis service isn\'t reachable. If you are opening index.html by double-clicking it (file://), the AI takeoff can only run on your deployed Netlify URL (https://your-site.netlify.app) — open that instead. Otherwise, open Advanced below and use a personal API key for local testing.');
+  try{ localStorage.setItem('cc_key',key); }catch(e){}
+  const content=[];
+  for(const f of files){
+    if(f.caption) content.push({type:'text', text:String(f.caption).slice(0,300)});
+    content.push(f.kind==='document'
+      ? {type:'document',source:{type:'base64',media_type:f.media_type,data:f.data}}
+      : {type:'image',source:{type:'base64',media_type:f.media_type,data:f.data}});
+  }
+  content.push({type:'text',text:prompt});
+  const resp=await fetch('https://api.anthropic.com/v1/messages',{
+    method:'POST',
+    headers:{'content-type':'application/json','x-api-key':key,
+      'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
+    body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:maxTok,messages:[{role:'user',content}]})
+  });
+  const data=await resp.json();
+  if(data.error) throw new Error(data.error.message||'API error');
+  return (data.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('\n');
+}
+
+$('btnAnalyze').addEventListener('click', async ()=>{
+  if(!planFiles.length){ setStatus('Add at least one plan page.', true); return; }
+  try{
+    setStatus('Loading pages…');
+    const pages=[];
+    for(const f of planFiles){
+      if(f.type==='application/pdf' && window.pdfjsLib){
+        const pdf = await pdfjsLib.getDocument({data:await f.arrayBuffer()}).promise;
+        if(pdf.numPages>60) throw new Error(`That PDF has ${pdf.numPages} pages — please split it or upload just the relevant sheets (60 page max).`);
+        for(let p=1;p<=pdf.numPages;p++) pages.push({kind:'pdf', file:f, pdf, pageNum:p});
+      } else if(f.type==='application/pdf'){
+        pages.push({kind:'pdf-raw', file:f}); /* pdf.js unavailable — fall back to sending the whole document */
+      } else {
+        pages.push({kind:'image', file:f});
+      }
+    }
+    if(!pages.length){ setStatus('No readable pages found.', true); return; }
+
+    /* pass 1: locate every cabinet-bearing space across all PDF pages */
+    const pdfPages = pages.filter(p=>p.kind==='pdf');
+    let hits=[];
+    if(pdfPages.length){
+      setStatus(`Scanning ${pdfPages.length} page(s) for cabinet-bearing rooms…`);
+      const thumbs=[];
+      for(const pg of pdfPages){
+        const cv=await renderPdfPage(pg.pdf, pg.pageNum, 900);
+        thumbs.push({media_type:'image/jpeg', data:canvasJpeg(cv,.6), kind:'image', caption:`Page ${pg.pageNum}`});
+      }
+      const locText=await callAI('locate', thumbs);
+      let parsed={}; try{ parsed=JSON.parse(extractJson(locText)); }catch(e){ console.error('locate JSON parse failed', e, locText); parsed={}; }
+      hits = Array.isArray(parsed.hits) ? parsed.hits : [];
+    }
+
+    /* pass 2: re-render just the hit pages at high DPI, cropped tight, and read dimensions */
+    const extractFiles=[];
+    if(hits.length){
+      setStatus(`Found ${hits.length} space${hits.length>1?'s':''} — reading dimensions at full resolution…`);
+      for(const h of hits){
+        const pg = pdfPages.find(p=>p.pageNum===Number(h.page));
+        if(!pg || !Array.isArray(h.bbox) || h.bbox.length!==4) continue;
+        const cv=await renderPdfPage(pg.pdf, pg.pageNum, 2400);
+        const cropped=cropCanvas(cv, h.bbox);
+        extractFiles.push({media_type:'image/jpeg', data:canvasJpeg(cropped,.9), kind:'image',
+          caption:`Page ${h.page} — likely "${h.name||h.type||'room'}" (${h.type||'?'}).`});
+      }
+    }
+    /* locate found nothing usable (schema miss, or it genuinely found no rooms) — rather
+       than dead-end, fall back to reading a handful of full pages directly so the user
+       still gets something to review instead of an empty box */
+    if(!extractFiles.length && pdfPages.length){
+      setStatus('No specific rooms were flagged — reading the first few pages directly as a fallback…');
+      for(const pg of pdfPages.slice(0,6)){
+        const cv=await renderPdfPage(pg.pdf, pg.pageNum, 1900);
+        extractFiles.push({media_type:'image/jpeg', data:canvasJpeg(cv,.85), kind:'image', caption:`Page ${pg.pageNum} (full page, no specific room identified).`});
+      }
+    }
+    for(const pg of pages.filter(p=>p.kind==='image')) extractFiles.push(await compressImage(pg.file));
+    for(const pg of pages.filter(p=>p.kind==='pdf-raw')) extractFiles.push({media_type:'application/pdf', data:await b64(pg.file), kind:'document'});
+
+    if(!extractFiles.length){ setStatus('No readable pages to analyze. Try Skip and enter rooms by hand, or upload a clearer page.', true); return; }
+
+    setStatus(extractFiles.length>1?`Reading dimensions on ${extractFiles.length} area(s)…`:'Reading dimensions…');
+    const text = await callAI('extract', extractFiles);
+    handleTakeoffText(text);
+  }catch(err){
+    console.error(err);
+    setStatus('Takeoff failed: '+(err&&err.message||err), true);
+  }
+});
+$('btnApply').addEventListener('click',()=>{
+  const raw=$('aiJson').value.trim();
+  if(!raw){ setStatus('Nothing to apply yet — click Analyze plans first, or type/paste room JSON into the box above.', true); return; }
+  let d; try{ d=JSON.parse(extractJson(raw)); }
+  catch(e){ console.error(e); setStatus('That JSON has a syntax error — fix it or re-run the takeoff.', true); return; }
+  if(!d.rooms||!d.rooms.length){ setStatus('No rooms found in the JSON.', true); return; }
+  state.rooms=d.rooms.map(x=>{
+    const r=newRoom(TYPES[x.type]?x.type:'kitchen', x.name);
+    r.shape=['single','L','galley','U'].includes(x.shape)?x.shape:'single';
+    r.ceil=Number(x.ceiling)||96;
+    for(const w of ['A','B','C']){ if(x.walls&&x.walls[w]) r.walls[w]=Number(x.walls[w]);
+      r.cfg[w]=(x.fixtures&&x.fixtures[w])?x.fixtures[w]:{}; }
+    if(!wallIds(r).some(w=>Object.values(r.cfg[w]||{}).some(Boolean))) r.cfg=newRoom(r.type).cfg;
+    return r;
+  });
+  state.active=0; gotoPage('pDesign'); rebuildAll();
+});
+$('btnSkip').addEventListener('click',()=>gotoPage('pDesign'));
+
+/* ================= UI: pages, rooms, sidebar ================= */
+function gotoPage(id){
+  document.querySelectorAll('.pagenav button').forEach(b=>b.classList.toggle('on',b.dataset.p===id));
+  document.querySelectorAll('.page').forEach(p=>p.classList.toggle('on',p.id===id));
+  if(id==='pDesign') render();
+}
+document.querySelectorAll('.pagenav button').forEach(b=>b.addEventListener('click',()=>gotoPage(b.dataset.p)));
+
+function buildRoomBar(){
+  const bar=$('roomBar');
+  bar.innerHTML = state.rooms.map((r,i)=>
+    `<div class="rchip ${i===state.active?'on':''}" data-i="${i}">${r.name}<i data-x="${i}">×</i></div>`).join('') +
+    `<select id="addType"><option value="">+ Add room…</option>
+     <option value="kitchen">Kitchen</option><option value="bath">Bathroom</option>
+     <option value="laundry">Laundry</option><option value="closet">Closet</option></select>`;
+  bar.querySelectorAll('.rchip').forEach(ch=>ch.addEventListener('click',e=>{
+    if(e.target.dataset.x!==undefined){ if(state.rooms.length>1){ state.rooms.splice(Number(e.target.dataset.x),1);
+        state.active=Math.max(0,state.active-1); rebuildAll(); } return; }
+    state.active=Number(ch.dataset.i); rebuildAll();
+  }));
+  $('addType').addEventListener('change',e=>{
+    if(!e.target.value) return;
+    const n = state.rooms.filter(r=>r.type===e.target.value).length;
+    state.rooms.push(newRoom(e.target.value, TYPES[e.target.value].label+(n?` ${n+1}`:'')));
+    state.active=state.rooms.length-1; rebuildAll();
+  });
+}
+function buildSidebar(){
+  const r=room(), t=TYPES[r.type], side=$('sidebar');
+  const ids=wallIds(r);
+  side.innerHTML = `
+  <div class="sect" style="border-top:none;margin-top:0;padding-top:0"><h3>${r.name} — Room</h3>
+    <div class="fld"><label>Room name</label><input id="rName" value="${r.name}"></div>
+    <div class="fld"><label>Shape</label><select id="rShape">
+      ${['single','L','galley','U'].map(s=>`<option value="${s}" ${r.shape===s?'selected':''}>${{single:'Single wall',L:'L — shape',galley:'Galley',U:'U — shape'}[s]}</option>`).join('')}
+    </select></div>
+    <div class="row2">
+      <div class="fld"><label>Ceiling (in)</label><input id="rCeil" type="number" value="${r.ceil}"></div>
+      ${t.uppers?`<div class="fld"><label>Upper ht</label><select id="rUpH">${[30,36,42].map(h=>`<option ${r.upH==h?'selected':''}>${h}</option>`).join('')}</select></div>`:'<div></div>'}
+    </div>
+    ${ids.map(i=>`<div class="fld"><label>Wall ${i} length (in)</label><input type="number" step="0.5" data-wall="${i}" class="wLen" value="${r.walls[i]}"></div>`).join('')}
+  </div>
+  <div class="sect"><h3>Fixtures per wall</h3>
+    ${ids.map(i=>{
+      const ov = layoutWall(r,i).overflow;
+      return `<div class="wallcard"><h4>WALL ${i}</h4>
+      ${Object.entries(t.fixtures).map(([k,name])=>`<label class="chk"><input type="checkbox" class="wFix" data-wall="${i}" data-k="${k}" ${r.cfg[i]&&r.cfg[i][k]?'checked':''}>${name}</label>`).join('')}
+      ${ov>0.5?`<div class="hint" style="color:var(--dim);font-weight:600">⚠ These fixtures need ~${fmt(Number(r.walls[i])+ov)}" — wall is only ${fmt(r.walls[i])}". Uncheck a fixture, add a linen/tall elsewhere, or lengthen this wall.</div>`:''}
+    </div>`;
+    }).join('')}
+  </div>
+  <div class="sect"><h3>Finishes & options</h3>
+    <div class="fld"><label>Door / panel style</label>
+      <div class="segs" id="segDoor">${DOORS.map((d,i)=>`<button class="${r.fin.door===i?'on':''}" data-i="${i}">${d}</button>`).join('')}</div></div>
+    <div class="fld"><label>Cabinet color</label>
+      <div class="swrow" id="swCab">${CABCOL.map((s,i)=>`<div class="sw ${r.fin.cab===i?'on':''}" data-i="${i}"><div class="c" style="background:${s.h}"></div><div class="n">${s.n}</div></div>`).join('')}</div></div>
+    ${r.type!=='closet'?`<div class="fld"><label>Countertop</label>
+      <div class="swrow" id="swTop">${TOPCOL.map((s,i)=>`<div class="sw ${r.fin.top===i?'on':''}" data-i="${i}"><div class="c" style="background:${s.h}"></div><div class="n">${s.n}</div></div>`).join('')}</div></div>`:''}
+    ${t.sinks.length?`<div class="fld"><label>Sink style</label><select id="rSink">
+      ${t.sinks.map((s,i)=>`<option value="${i}" ${r.fin.sink===i?'selected':''}>${s}</option>`).join('')}</select></div>`:''}
+    <p class="hint">Selections show in the 3D view and print on the drawing set for the shop.</p>
+  </div>`;
+
+  $('rName').addEventListener('input',()=>{r.name=$('rName').value;buildRoomBar();drawSchedule();});
+  $('rShape').addEventListener('change',()=>{r.shape=$('rShape').value;rebuildAll();});
+  $('rCeil').addEventListener('input',()=>{r.ceil=Number($('rCeil').value)||96;render();});
+  const uh=$('rUpH'); if(uh) uh.addEventListener('change',()=>{r.upH=Number(uh.value);render();});
+  side.querySelectorAll('.wLen').forEach(el=>el.addEventListener('input',()=>{r.walls[el.dataset.wall]=Number(el.value)||0;render();}));
+  side.querySelectorAll('.wFix').forEach(el=>el.addEventListener('change',()=>{
+    r.cfg[el.dataset.wall]=r.cfg[el.dataset.wall]||{}; r.cfg[el.dataset.wall][el.dataset.k]=el.checked; render();}));
+  $('segDoor').querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{r.fin.door=Number(b.dataset.i);buildSidebar();render();}));
+  $('swCab').querySelectorAll('.sw').forEach(s=>s.addEventListener('click',()=>{r.fin.cab=Number(s.dataset.i);buildSidebar();render();}));
+  const st=$('swTop'); if(st) st.querySelectorAll('.sw').forEach(s=>s.addEventListener('click',()=>{r.fin.top=Number(s.dataset.i);buildSidebar();render();}));
+  const sk=$('rSink'); if(sk) sk.addEventListener('change',()=>{r.fin.sink=Number(sk.value);render();});
+}
+function buildElevPick(){
+  $('elevPick').innerHTML=wallIds().map(i=>`<button data-w="${i}" class="${i===elevWall?'on':''}">Wall ${i}</button>`).join('');
+  $('elevPick').querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{elevWall=b.dataset.w;buildElevPick();drawElev();}));
+}
+function render(){
+  if(!wallIds().includes(elevWall)) elevWall='A';
+  buildElevPick(); drawPlan(); drawElev(); drawSchedule(); draw3D();
+}
+function rebuildAll(){ buildRoomBar(); buildSidebar(); render(); }
+
+document.querySelectorAll('.tab').forEach(t=>t.addEventListener('click',()=>{
+  document.querySelectorAll('.tab').forEach(x=>x.classList.remove('on'));
+  document.querySelectorAll('.view').forEach(x=>x.classList.remove('on'));
+  t.classList.add('on'); $(t.dataset.v).classList.add('on');
+  if(t.dataset.v==='v3d') draw3D();
+}));
+
+/* ================= PRINT SET ================= */
+function tb(sheet,no){ return `<div class="ptb">
+  <div><div class="l">Project</div><div class="v">${$('pName').value||'—'}</div></div>
+  <div><div class="l">Client</div><div class="v">${$('pClient').value||'—'}</div></div>
+  <div><div class="l">Sheet</div><div class="v">${sheet}</div></div>
+  <div><div class="l">Date</div><div class="v">${$('pDate').textContent}</div></div>
+  <div><div class="l">No.</div><div class="v">${no}</div></div></div>`; }
+$('btnPrint').addEventListener('click',()=>{
+  const saveA=state.active, saveW=elevWall; let html='', n=1;
+  for(let i=0;i<state.rooms.length;i++){
+    state.active=i; const r=room();
+    drawPlan();
+    html+=`<div class="psheet"><h2>${r.name} — plan</h2><div class="fin">${finLine(r)}</div><div class="body"><img src="${$('cvPlan').toDataURL('image/png')}"></div>${tb(r.name.toUpperCase()+' PLAN','C-'+n)}</div>`; n++;
+    for(const id of wallIds(r)){ elevWall=id; drawElev();
+      html+=`<div class="psheet"><h2>${r.name} — elevation, wall ${id}</h2><div class="fin">${finLine(r)}</div><div class="body"><img src="${$('cvElev').toDataURL('image/png')}"></div>${tb(r.name.toUpperCase()+' ELEV '+id,'C-'+n)}</div>`; n++; }
+    const {rows}=buildSchedule(r);
+    const trs=rows.map(q=>`<tr><td>${q.code}</td><td>${q.kind}</td><td>${q.qty}</td><td>${fmt(q.w)}</td><td>${fmt(q.h)}</td><td>${fmt(q.d)}</td><td>${[...q.walls].join(', ')}</td></tr>`).join('');
+    html+=`<div class="psheet"><h2>${r.name} — cabinet schedule</h2><div class="fin">${finLine(r)}</div><div class="body"><table><tr><th>Code</th><th>Type</th><th>Qty</th><th>W</th><th>H</th><th>D</th><th>Wall</th></tr>${trs}</table></div>${tb(r.name.toUpperCase()+' SCHED','C-'+n)}</div>`; n++;
+  }
+  state.active=saveA; elevWall=saveW; render();
+  $('printset').innerHTML=html;
+  setTimeout(()=>window.print(),150);
+});
+
+/* ================= SAVE / LOAD ================= */
+$('btnCSV').addEventListener('click',csv);
+$('btnSave').addEventListener('click',()=>{
+  const data={version:2,state,project:{name:$('pName').value,client:$('pClient').value}};
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([JSON.stringify(data,null,1)],{type:'application/json'}));
+  a.download=($('pName').value||'project').replace(/\s+/g,'-').toLowerCase()+'.cabinet.json'; a.click();
+});
+$('btnLoad').addEventListener('click',()=>$('fileIn').click());
+$('fileIn').addEventListener('change',e=>{
+  const f=e.target.files[0]; if(!f) return;
+  f.text().then(t=>{try{
+    const d=JSON.parse(t);
+    if(d.state&&d.state.rooms){ state.rooms=d.state.rooms; state.active=0; }
+    $('pName').value=d.project?.name||''; $('pClient').value=d.project?.client||'';
+    gotoPage('pDesign'); rebuildAll();
+  }catch(err){alert('Could not read that file.');}});
+  e.target.value='';
+});
+
+/* autosave (best-effort) */
+try{
+  const saved=localStorage.getItem('cc2');
+  if(saved){const d=JSON.parse(saved); if(d.rooms){state.rooms=d.rooms;state.active=0;}
+    if(d.name)$('pName').value=d.name; if(d.client)$('pClient').value=d.client;}
+  const k=localStorage.getItem('cc_key'); if(k)$('apiKey').value=k;
+  setInterval(()=>{try{localStorage.setItem('cc2',JSON.stringify({rooms:state.rooms,name:$('pName').value,client:$('pClient').value}));}catch(e){}},3000);
+}catch(e){}
+
+$('pDate').textContent=new Date().toLocaleDateString('en-US',{month:'2-digit',day:'2-digit',year:'numeric'});
+buildRoomBar(); buildSidebar();
+document.fonts?document.fonts.ready.then(render):setTimeout(render,300);
+render();
+</script>
+</body>
+</html>
