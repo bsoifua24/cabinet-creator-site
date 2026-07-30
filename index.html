@@ -199,6 +199,7 @@
       <button class="tab" data-v="velev">Elevation</button>
       <button class="tab" data-v="v3d">3D View</button>
       <button class="tab" data-v="vsched">Schedule</button>
+      <button class="tab" data-v="vspec">Spec Sheet</button>
     </div>
     <div class="view on" id="veagle"><div id="eagleWrap"></div></div>
     <div class="view" id="vplan"><div class="sheetbox"><span class="stamp">Plan — scale to fit</span><canvas class="draw" id="cvPlan" width="1600" height="1100"></canvas></div></div>
@@ -211,6 +212,7 @@
     <div class="view" id="vsched"><div class="sheetbox" style="padding:16px">
       <div id="schedTbl"></div><div class="totals" id="schedTot"></div>
       <button id="btnCSV" style="margin-top:12px">Copy schedule as CSV</button></div></div>
+    <div class="view" id="vspec"><div id="specWrap"></div></div>
   </main>
   </div>
 </div>
@@ -709,16 +711,46 @@ function buildSchedule(r){
   return {rows:Object.values(rows).sort((a,b)=>order[a.kind]-order[b.kind]||a.code.localeCompare(b.code)),baseLF,upperLF,tallN};
 }
 function finLine(r){ return `${DOORS[r.fin.door]} doors · ${CABCOL[r.fin.cab].n} · ${TOPCOL[r.fin.top].n}${TYPES[r.type].sinks[r.fin.sink]?' · '+TYPES[r.type].sinks[r.fin.sink]:''}`; }
-function drawSchedule(){
-  const r=room(), {rows,baseLF,upperLF,tallN}=buildSchedule(r);
+/* shared by the Schedule tab, the on-screen Spec Sheet, and the print set,
+   so the cabinet-list markup only lives in one place */
+function scheduleTableHtml(rows){
   let html='<table><tr><th>Code</th><th>Type</th><th>Qty</th><th>W (in)</th><th>H (in)</th><th>D (in)</th><th>Wall</th></tr>', last='';
   for(const q of rows){
     if(q.kind!==last){html+=`<tr class="grp"><td colspan="7">${q.kind} cabinets</td></tr>`;last=q.kind;}
     html+=`<tr><td>${q.code}</td><td>${q.kind}</td><td>${q.qty}</td><td>${fmt(q.w)}</td><td>${fmt(q.h)}</td><td>${fmt(q.d)}</td><td>${[...q.walls].join(', ')}</td></tr>`;
   }
-  html+='</table>';
-  $('schedTbl').innerHTML=html;
+  return html+'</table>';
+}
+function drawSchedule(){
+  const r=room(), {rows,baseLF,upperLF,tallN}=buildSchedule(r);
+  $('schedTbl').innerHTML=scheduleTableHtml(rows);
   $('schedTot').textContent=`${r.name}: base ${(baseLF/12).toFixed(1)} LF · uppers ${(upperLF/12).toFixed(1)} LF · tall ×${tallN}  |  ${finLine(r)}`;
+}
+/* on-screen mock sheet for the active room — the plan + every wall's
+   elevation (with the chosen finish applied) + the cabinet schedule, all in
+   one place, no need to trigger Print to see it */
+function drawSpecSheet(){
+  const wrap=$('specWrap'); if(!wrap) return;
+  const r=room(), saveW=elevWall;
+  drawPlan();
+  const planImg=$('cvPlan').toDataURL('image/png');
+  const elevImgs=wallIds(r).map(id=>{ elevWall=id; drawElev(); return {id, img:$('cvElev').toDataURL('image/png')}; });
+  elevWall=saveW; drawElev();
+  const {rows,baseLF,upperLF,tallN}=buildSchedule(r);
+  wrap.innerHTML=`
+    <div class="sheetbox" style="padding:16px">
+      <h3 style="font:600 15px var(--mono);letter-spacing:.05em;margin-bottom:2px">${r.name.toUpperCase()} — SPEC SHEET</h3>
+      <p class="hint" style="margin-bottom:14px">${finLine(r)}</p>
+      <p class="hint" style="margin-bottom:6px;font-weight:600;color:var(--ink)">Plan</p>
+      <img src="${planImg}" style="width:100%;border:1px solid var(--line);border-radius:2px;margin-bottom:16px">
+      <p class="hint" style="margin-bottom:6px;font-weight:600;color:var(--ink)">Elevations</p>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:12px;margin-bottom:16px">
+        ${elevImgs.map(e=>`<div><div class="hint" style="margin-bottom:4px">WALL ${e.id}</div><img src="${e.img}" style="width:100%;border:1px solid var(--line);border-radius:2px"></div>`).join('')}
+      </div>
+      <p class="hint" style="margin-bottom:6px;font-weight:600;color:var(--ink)">Cabinet schedule</p>
+      ${scheduleTableHtml(rows)}
+      <div class="totals">base ${(baseLF/12).toFixed(1)} LF · uppers ${(upperLF/12).toFixed(1)} LF · tall ×${tallN} · ceiling ${fmt(r.ceil)}", counter ${fmt(counterH(r))}" AFF</div>
+    </div>`;
 }
 function csv(){
   let out='Room,Code,Type,Qty,Width_in,Height_in,Depth_in,Walls,Finish\n';
@@ -1175,7 +1207,7 @@ function buildElevPick(){
 }
 function render(){
   if(!wallIds().includes(elevWall)) elevWall='A';
-  buildElevPick(); drawPlan(); drawElev(); drawSchedule(); draw3D(); drawEagleEye();
+  buildElevPick(); drawPlan(); drawElev(); drawSchedule(); draw3D(); drawEagleEye(); drawSpecSheet();
 }
 function rebuildAll(){ buildRoomBar(); buildSidebar(); render(); }
 
@@ -1214,8 +1246,7 @@ $('btnPrint').addEventListener('click', async ()=>{
     for(const id of wallIds(r)){ elevWall=id; drawElev();
       html+=`<div class="psheet"><h2>Room ${roomNo+1} — ${r.name} — elevation, wall ${id}</h2><div class="fin">${finLine(r)}</div><div class="body"><img src="${$('cvElev').toDataURL('image/png')}"></div>${tb('R'+(roomNo+1)+' '+r.name.toUpperCase()+' ELEV '+id,'C-'+n)}</div>`; n++; }
     const {rows}=buildSchedule(r);
-    const trs=rows.map(q=>`<tr><td>${q.code}</td><td>${q.kind}</td><td>${q.qty}</td><td>${fmt(q.w)}</td><td>${fmt(q.h)}</td><td>${fmt(q.d)}</td><td>${[...q.walls].join(', ')}</td></tr>`).join('');
-    html+=`<div class="psheet"><h2>Room ${roomNo+1} — ${r.name} — cabinet schedule</h2><div class="fin">${finLine(r)}</div><div class="body"><table><tr><th>Code</th><th>Type</th><th>Qty</th><th>W</th><th>H</th><th>D</th><th>Wall</th></tr>${trs}</table></div>${tb('R'+(roomNo+1)+' '+r.name.toUpperCase()+' SCHED','C-'+n)}</div>`; n++;
+    html+=`<div class="psheet"><h2>Room ${roomNo+1} — ${r.name} — cabinet schedule</h2><div class="fin">${finLine(r)}</div><div class="body">${scheduleTableHtml(rows)}</div>${tb('R'+(roomNo+1)+' '+r.name.toUpperCase()+' SCHED','C-'+n)}</div>`; n++;
   });
 
   state.active=saveA; elevWall=saveW; render();
