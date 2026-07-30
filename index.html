@@ -194,12 +194,14 @@
   <aside id="sidebar"></aside>
   <main>
     <div class="tabs">
-      <button class="tab on" data-v="vplan">Plan · Top</button>
+      <button class="tab on" data-v="veagle">Eagle Eye</button>
+      <button class="tab" data-v="vplan">Plan · Top</button>
       <button class="tab" data-v="velev">Elevation</button>
       <button class="tab" data-v="v3d">3D View</button>
       <button class="tab" data-v="vsched">Schedule</button>
     </div>
-    <div class="view on" id="vplan"><div class="sheetbox"><span class="stamp">Plan — scale to fit</span><canvas class="draw" id="cvPlan" width="1600" height="1100"></canvas></div></div>
+    <div class="view on" id="veagle"><div id="eagleWrap"></div></div>
+    <div class="view" id="vplan"><div class="sheetbox"><span class="stamp">Plan — scale to fit</span><canvas class="draw" id="cvPlan" width="1600" height="1100"></canvas></div></div>
     <div class="view" id="velev">
       <div class="elevpick" id="elevPick"></div>
       <div class="sheetbox"><span class="stamp">Elevation</span><canvas class="draw" id="cvElev" width="1600" height="900"></canvas></div>
@@ -262,7 +264,8 @@ function newRoom(type, name){
     baseH:t.baseH, baseD:t.baseD, toe:t.toe, ctT:t.ctT, splash:t.splash,
     walls:{A: type==='kitchen'?150:96, B:120, C:120},
     cfg:{A:{}, B:{}, C:{}},
-    fin:{door:1, cab:4, top:0, sink:0}
+    fin:{door:1, cab:4, top:0, sink:0},
+    included:true, source:null /* source: {page,bbox} when found by the AI takeoff, else null */
   };
   if(type==='kitchen'){ r.cfg.A={sink:true,dw:true,window:true}; r.cfg.B={range:true,fridge:true}; }
   if(type==='bath'){ r.cfg.A={vanity:true,toilet:true}; }
@@ -270,7 +273,7 @@ function newRoom(type, name){
   if(type==='closet'){ r.cfg.A={shelves:true,rods:true,drawers:true}; }
   return r;
 }
-const state = { rooms:[newRoom('kitchen')], active:0 };
+const state = { rooms:[newRoom('kitchen')], active:0, sourcePages:[] };
 const room = () => state.rooms[state.active];
 const wallIds = r => (r=r||room(), r.shape==='single'?['A']:r.shape==='U'?['A','B','C']:['A','B']);
 const counterH = r => (r=r||room(), r.baseH + r.ctT);
@@ -719,9 +722,85 @@ function drawSchedule(){
 }
 function csv(){
   let out='Room,Code,Type,Qty,Width_in,Height_in,Depth_in,Walls,Finish\n';
-  for(const r of state.rooms){ const {rows}=buildSchedule(r);
+  for(const r of state.rooms.filter(r=>r.included!==false)){ const {rows}=buildSchedule(r);
     for(const q of rows) out+=`${r.name},${q.code},${q.kind},${q.qty},${fmt(q.w)},${fmt(q.h)},${fmt(q.d)},"${[...q.walls].join(' ')}","${finLine(r)}"\n`; }
   navigator.clipboard.writeText(out).then(()=>alert('Full project schedule copied — paste into email or a spreadsheet for the shop.'));
+}
+
+/* ================= EAGLE EYE (whole-house overview) ================= */
+/* draws a source page image with numbered highlight boxes for the given
+   rooms ({r,i} pairs) — shared by the live Eagle Eye tab and the print set's
+   cover sheet so the highlighting logic only lives in one place */
+function renderAnnotatedPage(pageEntry, rooms){
+  return new Promise(resolve=>{
+    const img=new Image();
+    img.onload=()=>{
+      const cv=document.createElement('canvas');
+      cv.width=img.width; cv.height=img.height;
+      const c=ctxSetup(cv);
+      c.drawImage(img,0,0);
+      rooms.forEach(({r,i})=>{
+        const [x0,y0,x1,y1]=r.source.bbox;
+        const bx=x0*cv.width, by=y0*cv.height, bw=(x1-x0)*cv.width, bh=(y1-y0)*cv.height;
+        const col=r.included!==false?'#c4452c':'#9aa4af';
+        rect(c,bx,by,bw,bh, r.included!==false?3:1.5, col, r.included!==false?'rgba(196,69,44,.16)':'rgba(154,164,175,.12)');
+        c.save(); c.fillStyle=col; c.font='700 30px "IBM Plex Mono"'; c.textAlign='left'; c.textBaseline='top';
+        c.fillText(String(i+1), bx+6, by+4);
+        c.restore();
+      });
+      resolve(cv);
+    };
+    img.src=pageEntry.img;
+  });
+}
+function eagleRow(r,i){
+  return `<div class="chk" style="justify-content:space-between">
+    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin:0">
+      <input type="checkbox" class="eagleChk" data-i="${i}" ${r.included!==false?'checked':''}>
+      <b>#${i+1}</b> ${r.name} <span style="color:var(--ink-soft);font:500 11px var(--mono)">(${TYPES[r.type]?TYPES[r.type].label:r.type})</span>
+    </label>
+    <button class="eagleEdit" data-i="${i}" style="padding:4px 10px;font-size:11px">Edit →</button>
+  </div>`;
+}
+function drawEagleEye(){
+  const wrap=$('eagleWrap'); if(!wrap) return;
+  const byPage={};
+  for(const sp of (state.sourcePages||[])) byPage[sp.page]={img:sp.img, rooms:[]};
+  const others=[];
+  state.rooms.forEach((r,i)=>{
+    if(r.source && byPage[r.source.page]) byPage[r.source.page].rooms.push({r,i});
+    else others.push({r,i});
+  });
+  const pageNums=Object.keys(byPage).map(Number).sort((a,b)=>a-b);
+
+  let html='';
+  if(!pageNums.length && !others.length){
+    html='<div class="sheetbox" style="padding:16px"><p class="hint">No rooms yet — run "Analyze plans" on the Import page, or add a room by hand with the "+ Add room…" menu above.</p></div>';
+  }
+  for(const pnum of pageNums){
+    html+=`<div class="sheetbox" style="margin-bottom:12px"><span class="stamp">Page ${pnum}</span><canvas class="draw" data-page="${pnum}" width="1600" height="1200"></canvas></div>`;
+    html+=`<div class="wallcard" style="margin-bottom:16px">${byPage[pnum].rooms.map(({r,i})=>eagleRow(r,i)).join('')}</div>`;
+  }
+  if(others.length){
+    html+=`<div class="wallcard"><h4>OTHER ROOMS — no blueprint reference</h4>${others.map(({r,i})=>eagleRow(r,i)).join('')}</div>`;
+  }
+  wrap.innerHTML=html;
+
+  for(const pnum of pageNums){
+    const cv=wrap.querySelector(`canvas[data-page="${pnum}"]`);
+    renderAnnotatedPage(byPage[pnum], byPage[pnum].rooms).then(annotated=>{
+      cv.width=annotated.width; cv.height=annotated.height;
+      cv.getContext('2d').drawImage(annotated,0,0);
+    });
+  }
+
+  wrap.querySelectorAll('.eagleChk').forEach(el=>el.addEventListener('change',()=>{
+    state.rooms[Number(el.dataset.i)].included=el.checked; render();
+  }));
+  wrap.querySelectorAll('.eagleEdit').forEach(el=>el.addEventListener('click',()=>{
+    state.active=Number(el.dataset.i); rebuildAll();
+    const t=document.querySelector('.tab[data-v="vplan"]'); if(t) t.click();
+  }));
 }
 
 /* ================= AI PLAN TAKEOFF ================= */
@@ -772,6 +851,7 @@ Respond with ONLY valid JSON, no markdown fences, no commentary, in exactly this
  {"name":"Kitchen","type":"kitchen","shape":"L","ceiling":96,
   "walls":{"A":150,"B":126,"C":0},
   "fixtures":{"A":{"sink":true,"dw":true,"window":true},"B":{"range":true,"fridge":true}},
+  "sourcePage":3,
   "notes":"anything ambiguous"}
 ]}
 Rules:
@@ -779,6 +859,7 @@ Rules:
 - shape is one of: single, L, galley, U. Wall A first; for L, A is the longer leg; for U, B is the back wall.
 - All wall lengths in INCHES along the face that receives cabinets. Omit or set 0 for unused walls.
 - fixtures keys by room type — kitchen: sink, dw, range, fridge, window · bath: vanity, vanity2, linen, toilet · laundry: washer, dryer, sink, tall · closet: drawers, shelves, rods.
+- sourcePage: if the image for this room was preceded by a caption like "Page 3 — likely...", echo that page number here as an integer. Omit if you can't tell.
 - If a dimension is not legible, estimate from scale and say so in notes. Never invent rooms.`;
 
 /* shrink photos client-side so uploads are fast and fit serverless limits */
@@ -834,16 +915,20 @@ function extractJson(text){
   if(i!==-1 && j!==-1 && j>i) s=s.slice(i,j+1);
   return s;
 }
+/* returns the parsed {rooms:[...]} object on success (also populates the
+   review textarea), or null on a parse failure (raw text shown instead) */
 function handleTakeoffText(text){
   const clean=extractJson(text);
   try{
-    JSON.parse(clean);
+    const d=JSON.parse(clean);
     $('aiJson').value=clean;
-    setStatus('Done — review the numbers below, then apply.');
+    setStatus('Done — loading into the Designer…');
+    return d;
   }catch(e){
     console.error('takeoff JSON parse failed', e, text);
     $('aiJson').value=text||'';
     setStatus('The AI reply wasn\'t valid JSON — the raw response is in the box below so you can fix it by hand, or just re-run the takeoff.', true);
+    return null;
   }
 }
 
@@ -886,6 +971,30 @@ async function callAI(mode, files){
   return (data.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('\n');
 }
 
+/* builds state.rooms from a parsed takeoff JSON, wiring each room back to the
+   blueprint location it came from (if any) so the Eagle Eye tab can show it */
+function applyRoomsFromJson(d, hits, sourcePages){
+  hits = hits||[]; sourcePages = sourcePages||[];
+  state.rooms = d.rooms.map(x=>{
+    const r=newRoom(TYPES[x.type]?x.type:'kitchen', x.name);
+    r.shape=['single','L','galley','U'].includes(x.shape)?x.shape:'single';
+    r.ceil=Number(x.ceiling)||96;
+    for(const w of ['A','B','C']){ if(x.walls&&x.walls[w]) r.walls[w]=Number(x.walls[w]);
+      r.cfg[w]=(x.fixtures&&x.fixtures[w])?x.fixtures[w]:{}; }
+    if(!wallIds(r).some(w=>Object.values(r.cfg[w]||{}).some(Boolean))) r.cfg=newRoom(r.type).cfg;
+    r.included=true;
+    r.source=null;
+    if(x.sourcePage!=null){
+      const onPage=hits.filter(h=>Number(h.page)===Number(x.sourcePage) && Array.isArray(h.bbox) && h.bbox.length===4);
+      const match=onPage.find(h=>h.type===x.type) || onPage[0];
+      if(match) r.source={page:Number(x.sourcePage), bbox:match.bbox};
+    }
+    return r;
+  });
+  state.active=0;
+  state.sourcePages=sourcePages;
+}
+
 $('btnAnalyze').addEventListener('click', async ()=>{
   if(!planFiles.length){ setStatus('Add at least one plan page.', true); return; }
   try{
@@ -919,6 +1028,18 @@ $('btnAnalyze').addEventListener('click', async ()=>{
       hits = Array.isArray(parsed.hits) ? parsed.hits : [];
     }
 
+    /* whole-page renders for every page that had a hit — this is what the Eagle
+       Eye tab draws numbered highlight boxes on top of */
+    const sourcePages=[];
+    if(hits.length){
+      const pageNums=[...new Set(hits.map(h=>Number(h.page)))].filter(n=>pdfPages.some(p=>p.pageNum===n));
+      for(const n of pageNums){
+        const pg=pdfPages.find(p=>p.pageNum===n);
+        const cv=await renderPdfPage(pg.pdf, n, 1600);
+        sourcePages.push({page:n, img:cv.toDataURL('image/jpeg',.82)});
+      }
+    }
+
     /* pass 2: re-render just the hit pages at high DPI, cropped tight, and read dimensions */
     const extractFiles=[];
     if(hits.length){
@@ -949,7 +1070,14 @@ $('btnAnalyze').addEventListener('click', async ()=>{
 
     setStatus(extractFiles.length>1?`Reading dimensions on ${extractFiles.length} area(s)…`:'Reading dimensions…');
     const text = await callAI('extract', extractFiles);
-    handleTakeoffText(text);
+    const d = handleTakeoffText(text);
+    if(d && Array.isArray(d.rooms) && d.rooms.length){
+      applyRoomsFromJson(d, hits, sourcePages);
+      gotoPage('pDesign'); rebuildAll();
+      setStatus(`Loaded ${d.rooms.length} space${d.rooms.length>1?'s':''} — review them on the Eagle Eye tab below.`);
+    } else if(d){
+      setStatus('The AI response was valid JSON but had no rooms in it. Review the box below, or re-run.', true);
+    }
   }catch(err){
     console.error(err);
     setStatus('Takeoff failed: '+(err&&err.message||err), true);
@@ -961,16 +1089,8 @@ $('btnApply').addEventListener('click',()=>{
   let d; try{ d=JSON.parse(extractJson(raw)); }
   catch(e){ console.error(e); setStatus('That JSON has a syntax error — fix it or re-run the takeoff.', true); return; }
   if(!d.rooms||!d.rooms.length){ setStatus('No rooms found in the JSON.', true); return; }
-  state.rooms=d.rooms.map(x=>{
-    const r=newRoom(TYPES[x.type]?x.type:'kitchen', x.name);
-    r.shape=['single','L','galley','U'].includes(x.shape)?x.shape:'single';
-    r.ceil=Number(x.ceiling)||96;
-    for(const w of ['A','B','C']){ if(x.walls&&x.walls[w]) r.walls[w]=Number(x.walls[w]);
-      r.cfg[w]=(x.fixtures&&x.fixtures[w])?x.fixtures[w]:{}; }
-    if(!wallIds(r).some(w=>Object.values(r.cfg[w]||{}).some(Boolean))) r.cfg=newRoom(r.type).cfg;
-    return r;
-  });
-  state.active=0; gotoPage('pDesign'); rebuildAll();
+  applyRoomsFromJson(d, [], []);
+  gotoPage('pDesign'); rebuildAll();
 });
 $('btnSkip').addEventListener('click',()=>gotoPage('pDesign'));
 
@@ -1055,7 +1175,7 @@ function buildElevPick(){
 }
 function render(){
   if(!wallIds().includes(elevWall)) elevWall='A';
-  buildElevPick(); drawPlan(); drawElev(); drawSchedule(); draw3D();
+  buildElevPick(); drawPlan(); drawElev(); drawSchedule(); draw3D(); drawEagleEye();
 }
 function rebuildAll(){ buildRoomBar(); buildSidebar(); render(); }
 
@@ -1073,18 +1193,31 @@ function tb(sheet,no){ return `<div class="ptb">
   <div><div class="l">Sheet</div><div class="v">${sheet}</div></div>
   <div><div class="l">Date</div><div class="v">${$('pDate').textContent}</div></div>
   <div><div class="l">No.</div><div class="v">${no}</div></div></div>`; }
-$('btnPrint').addEventListener('click',()=>{
+$('btnPrint').addEventListener('click', async ()=>{
+  const included = state.rooms.map((r,i)=>({r,i})).filter(x=>x.r.included!==false);
+  if(!included.length){ alert('No rooms are selected — check at least one room on the Eagle Eye tab before printing.'); return; }
   const saveA=state.active, saveW=elevWall; let html='', n=1;
-  for(let i=0;i<state.rooms.length;i++){
-    state.active=i; const r=room();
+
+  /* eagle-eye cover sheet(s) first, so the shop sees where everything sits in the house
+     before the per-room detail — only the rooms actually kept get highlighted/numbered */
+  for(const sp of (state.sourcePages||[])){
+    const roomsOnPage=included.filter(x=>x.r.source && x.r.source.page===sp.page);
+    if(!roomsOnPage.length) continue;
+    const annotated=await renderAnnotatedPage(sp, roomsOnPage);
+    html+=`<div class="psheet"><h2>Eagle eye — page ${sp.page}</h2><div class="body"><img src="${annotated.toDataURL('image/png')}"></div>${tb('EAGLE EYE P'+sp.page,'C-'+n)}</div>`; n++;
+  }
+
+  included.forEach(({r,i:origIdx}, roomNo)=>{
+    state.active=origIdx;
     drawPlan();
-    html+=`<div class="psheet"><h2>${r.name} — plan</h2><div class="fin">${finLine(r)}</div><div class="body"><img src="${$('cvPlan').toDataURL('image/png')}"></div>${tb(r.name.toUpperCase()+' PLAN','C-'+n)}</div>`; n++;
+    html+=`<div class="psheet"><h2>Room ${roomNo+1} — ${r.name} — plan</h2><div class="fin">${finLine(r)}</div><div class="body"><img src="${$('cvPlan').toDataURL('image/png')}"></div>${tb('R'+(roomNo+1)+' '+r.name.toUpperCase()+' PLAN','C-'+n)}</div>`; n++;
     for(const id of wallIds(r)){ elevWall=id; drawElev();
-      html+=`<div class="psheet"><h2>${r.name} — elevation, wall ${id}</h2><div class="fin">${finLine(r)}</div><div class="body"><img src="${$('cvElev').toDataURL('image/png')}"></div>${tb(r.name.toUpperCase()+' ELEV '+id,'C-'+n)}</div>`; n++; }
+      html+=`<div class="psheet"><h2>Room ${roomNo+1} — ${r.name} — elevation, wall ${id}</h2><div class="fin">${finLine(r)}</div><div class="body"><img src="${$('cvElev').toDataURL('image/png')}"></div>${tb('R'+(roomNo+1)+' '+r.name.toUpperCase()+' ELEV '+id,'C-'+n)}</div>`; n++; }
     const {rows}=buildSchedule(r);
     const trs=rows.map(q=>`<tr><td>${q.code}</td><td>${q.kind}</td><td>${q.qty}</td><td>${fmt(q.w)}</td><td>${fmt(q.h)}</td><td>${fmt(q.d)}</td><td>${[...q.walls].join(', ')}</td></tr>`).join('');
-    html+=`<div class="psheet"><h2>${r.name} — cabinet schedule</h2><div class="fin">${finLine(r)}</div><div class="body"><table><tr><th>Code</th><th>Type</th><th>Qty</th><th>W</th><th>H</th><th>D</th><th>Wall</th></tr>${trs}</table></div>${tb(r.name.toUpperCase()+' SCHED','C-'+n)}</div>`; n++;
-  }
+    html+=`<div class="psheet"><h2>Room ${roomNo+1} — ${r.name} — cabinet schedule</h2><div class="fin">${finLine(r)}</div><div class="body"><table><tr><th>Code</th><th>Type</th><th>Qty</th><th>W</th><th>H</th><th>D</th><th>Wall</th></tr>${trs}</table></div>${tb('R'+(roomNo+1)+' '+r.name.toUpperCase()+' SCHED','C-'+n)}</div>`; n++;
+  });
+
   state.active=saveA; elevWall=saveW; render();
   $('printset').innerHTML=html;
   setTimeout(()=>window.print(),150);

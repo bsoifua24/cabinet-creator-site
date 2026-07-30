@@ -12,6 +12,7 @@ Respond with ONLY valid JSON, no markdown fences, no commentary, in exactly this
  {"name":"Kitchen","type":"kitchen","shape":"L","ceiling":96,
   "walls":{"A":150,"B":126,"C":0},
   "fixtures":{"A":{"sink":true,"dw":true,"window":true},"B":{"range":true,"fridge":true}},
+  "sourcePage":3,
   "notes":"anything ambiguous"}
 ]}
 Rules:
@@ -19,6 +20,7 @@ Rules:
 - shape is one of: single, L, galley, U. Wall A first; for L, A is the longer leg; for U, B is the back wall.
 - All wall lengths in INCHES along the face that receives cabinets. Omit or set 0 for unused walls.
 - fixtures keys by room type — kitchen: sink, dw, range, fridge, window · bath: vanity, vanity2, linen, toilet · laundry: washer, dryer, sink, tall · closet: drawers, shelves, rods.
+- sourcePage: if the image for this room was preceded by a caption like "Page 3 — likely...", echo that page number here as an integer. Omit if you can't tell.
 - If a dimension is not legible, estimate from scale and say so in notes. Never invent rooms.`;
 
 exports.handler = async (event) => {
