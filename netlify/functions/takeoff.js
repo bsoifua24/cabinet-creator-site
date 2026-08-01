@@ -36,8 +36,11 @@ exports.handler = async (event) => {
   try { files = (JSON.parse(event.body || '{}').files) || []; }
   catch (e) { return { statusCode: 400, headers, body: JSON.stringify({ error: 'Bad request body' }) }; }
 
-  if (!files.length || files.length > 24)
-    return { statusCode: 400, headers, body: JSON.stringify({ error: 'Send 1–24 room images/pages.' }) };
+  /* the client now batches into small groups per request (6 at a time) so a
+     large plan set can't produce a payload/output big enough to time out or
+     get truncated — this cap just guards against a stray oversized request */
+  if (!files.length || files.length > 10)
+    return { statusCode: 400, headers, body: JSON.stringify({ error: 'Send 1–10 room images/pages per request — the client should be batching automatically.' }) };
 
   const OK_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
   const content = [];

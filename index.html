@@ -1118,15 +1118,36 @@ $('btnAnalyze').addEventListener('click', async ()=>{
 
     if(!extractFiles.length){ setStatus('No readable pages to analyze. Try Skip and enter rooms by hand, or upload a clearer page.', true); return; }
 
-    setStatus(extractFiles.length>1?`Reading dimensions on ${extractFiles.length} area(s)…`:'Reading dimensions…');
-    const text = await callAI('extract', extractFiles);
-    const d = handleTakeoffText(text);
-    if(d && Array.isArray(d.rooms) && d.rooms.length){
+    /* one call per handful of images, not one giant call — a full "CD set" can
+       easily produce more detected rooms than fit safely in a single request
+       (image/output-token limits, function timeouts), and one bad batch
+       shouldn't be able to sink rooms that were read just fine in another */
+    const EXTRACT_BATCH=6;
+    const batches=[];
+    for(let i=0;i<extractFiles.length;i+=EXTRACT_BATCH) batches.push(extractFiles.slice(i,i+EXTRACT_BATCH));
+    const allRooms=[]; let failedBatches=0, lastRawText='';
+    for(let bi=0; bi<batches.length; bi++){
+      setStatus(batches.length>1
+        ? `Reading dimensions — batch ${bi+1}/${batches.length} (${batches[bi].length} area${batches[bi].length>1?'s':''})…`
+        : `Reading dimensions on ${batches[bi].length} area${batches[bi].length>1?'s':''}…`);
+      let text;
+      try{ text=await callAI('extract', batches[bi]); }
+      catch(err){ console.error('extract batch failed', bi, err); failedBatches++; continue; }
+      lastRawText=text;
+      let d; try{ d=JSON.parse(extractJson(text)); }
+      catch(e){ console.error('extract batch JSON parse failed', bi, e, text); failedBatches++; continue; }
+      if(d && Array.isArray(d.rooms)) allRooms.push(...d.rooms);
+    }
+
+    if(allRooms.length){
+      const d=handleTakeoffText(JSON.stringify({rooms:allRooms}));
       applyRoomsFromJson(d, hits, sourcePages);
       gotoPage('pDesign'); rebuildAll();
-      setStatus(`Loaded ${d.rooms.length} space${d.rooms.length>1?'s':''} — review them on the Eagle Eye tab below.`);
-    } else if(d){
-      setStatus('The AI response was valid JSON but had no rooms in it. Review the box below, or re-run.', true);
+      const warn=failedBatches?` (${failedBatches} of ${batches.length} batches failed — re-run to retry those)`:'';
+      setStatus(`Loaded ${allRooms.length} space${allRooms.length>1?'s':''}${warn} — review them on the Eagle Eye tab below.`, !!failedBatches);
+    } else {
+      handleTakeoffText(lastRawText||'');
+      setStatus(failedBatches===batches.length ? 'Every batch failed — check the browser console for details, or re-run.' : 'The AI response had no rooms in it. Review the box below, or re-run.', true);
     }
   }catch(err){
     console.error(err);
