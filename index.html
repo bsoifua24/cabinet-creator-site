@@ -268,7 +268,7 @@ const TYPES = {
     sinks:['Undermount — Single','Undermount — Double','Farmhouse Apron']},
   bath:{label:'Bathroom', baseH:31, baseD:21, toe:4, ctT:1, splash:4, upD:0, upH:0, uppers:false,
     fixtures:{vanity:'Vanity sink (VSB36)', vanity2:'Second sink (double vanity)', linen:'Linen tower 18"', toilet:'Toilet space 30"'},
-    sinks:['Undermount Oval','Vessel Bowl','Integrated Top']},
+    sinks:['Undermount Oval','Vessel Bowl','Integrated Top','Floating Vanity']},
   laundry:{label:'Laundry', baseH:34.5, baseD:24, toe:4.5, ctT:1.5, splash:18, upD:12, upH:36, uppers:true,
     fixtures:{washer:'Washer 27"', dryer:'Dryer 27"', sink:'Utility sink (SB30)', tall:'Tall storage 18"'},
     sinks:['Drop-in Utility','Undermount — Single']},
@@ -535,6 +535,7 @@ function drawElev(){
 
   line(c,X(-8),Yf(0),X(L+8),Yf(0),3); line(c,X(-8),Yf(ceil),X(L+8),Yf(ceil),3);
   const bH=r.baseH, toe=r.toe, ctH=counterH(r);
+  const floatVanity = r.type==='bath' && r.fin.sink===3; /* wall-hung, raised off the floor */
 
   for(const it of lay.items){
     const x=X(it.x), w=it.w*s;
@@ -560,16 +561,17 @@ function drawElev(){
     if(it.type==='corner'){ rect(c,x,Yf(bH||30),w,((bH||30)-toe)*s,2,'#1b2a3a','#e6ebef');
       txt(c,'CNR',x+w/2,Yf((bH||30)/2),13,'#5d6d80'); continue; }
     /* standard base / sink / dw / db / ls / filler */
-    if(toe>0) rect(c,x+(it.type==='filler'?0:6),Yf(toe),w-(it.type==='filler'?0:12),toe*s,1.5,'#1b2a3a');
-    rect(c,x,Yf(bH),w,(bH-toe)*s,2,'#1b2a3a', it.type==='filler'?'#e6ebef':cabF);
-    if(it.type==='dw'){ txt(c,'D/W',x+w/2,Yf(bH/2+toe/2),18,tcol); }
+    const gapB = floatVanity ? toe+6 : toe; /* floating vanity: raise the box, skip the toe-kick */
+    if(toe>0 && !floatVanity) rect(c,x+(it.type==='filler'?0:6),Yf(toe),w-(it.type==='filler'?0:12),toe*s,1.5,'#1b2a3a');
+    rect(c,x,Yf(bH),w,(bH-gapB)*s,2,'#1b2a3a', it.type==='filler'?'#e6ebef':cabF);
+    if(it.type==='dw'){ txt(c,'D/W',x+w/2,Yf(bH/2+gapB/2),18,tcol); }
     else if(it.type!=='filler'){
       line(c,x,Yf(bH-6),x+w,Yf(bH-6),1.5);
-      const dy=Yf(bH-6), dh=(bH-6-toe)*s;
-      if(it.type==='db'){ line(c,x,Yf(toe+(bH-toe)/3),x+w,Yf(toe+(bH-toe)/3),1.5); line(c,x,Yf(toe+2*(bH-toe)/3),x+w,Yf(toe+2*(bH-toe)/3),1.5); }
-      else if(it.w>=27){ line(c,x+w/2,dy,x+w/2,Yf(toe),1.5); doorDetail(c,x,dy,w/2,dh,dstyle,s); doorDetail(c,x+w/2,dy,w/2,dh,dstyle,s); }
+      const dy=Yf(bH-6), dh=(bH-6-gapB)*s;
+      if(it.type==='db'){ line(c,x,Yf(gapB+(bH-gapB)/3),x+w,Yf(gapB+(bH-gapB)/3),1.5); line(c,x,Yf(gapB+2*(bH-gapB)/3),x+w,Yf(gapB+2*(bH-gapB)/3),1.5); }
+      else if(it.w>=27){ line(c,x+w/2,dy,x+w/2,Yf(gapB),1.5); doorDetail(c,x,dy,w/2,dh,dstyle,s); doorDetail(c,x+w/2,dy,w/2,dh,dstyle,s); }
       else doorDetail(c,x,dy,w,dh,dstyle,s);
-      txt(c,it.label,x+w/2,Yf((bH+toe)/2-3),Math.min(17,w/3.4),tcol);
+      txt(c,it.label,x+w/2,Yf((bH+gapB)/2-3),Math.min(17,w/3.4),tcol);
       dimH(c,x,x+w,Yf(0)+34,fmt(it.w)+'"',15);
     } else dimH(c,x,x+w,Yf(0)+34,fmt(it.w)+'"',13);
   }
@@ -609,6 +611,7 @@ function drawElev(){
 let three=null;
 function draw3D(){
   const r=room(), cv=$('cv3d');
+  const floatVanity = r.type==='bath' && r.fin.sink===3; /* wall-hung, raised off the floor */
   if(!window.THREE) return;
   if(!three){
     const renderer=new THREE.WebGLRenderer({canvas:cv,antialias:true});
@@ -694,10 +697,11 @@ function draw3D(){
           m.position.set(px,hh,pz); m.rotation.z=(rotY===0)?Math.PI/2:0; m.rotation.x=(rotY===0)?0:Math.PI/2; g.add(m); }
         put(it.w,2,bd,it.x,TALL_H,0,mCab); continue; }
       /* base cabinet */
-      const bh=r.baseH-r.toe;
-      put(it.w-.5,bh,bd,it.x+.25,r.toe+bh/2,0,it.type==='dw'?mAppl:mCab);
-      if(it.type!=='dw'&&it.type!=='filler'&&it.type!=='corner') doorFace(it.w-.5,bh-3,it.x+.25,r.toe+bh/2,bd);
-      if(r.toe>0) put(it.w-6,r.toe,bd-3,it.x+3,r.toe/2,0,mCabD,false);
+      const gapB = floatVanity ? r.toe+6 : r.toe;
+      const bh=r.baseH-gapB;
+      put(it.w-.5,bh,bd,it.x+.25,gapB+bh/2,0,it.type==='dw'?mAppl:mCab);
+      if(it.type!=='dw'&&it.type!=='filler'&&it.type!=='corner') doorFace(it.w-.5,bh-3,it.x+.25,gapB+bh/2,bd);
+      if(r.toe>0 && !floatVanity) put(it.w-6,r.toe,bd-3,it.x+3,r.toe/2,0,mCabD,false);
     }
     if(r.type!=='closet'){
       const span=lay.items.filter(i=>!['fridge','tall','gap','washer','dryer','tower','rod'].includes(i.type));
