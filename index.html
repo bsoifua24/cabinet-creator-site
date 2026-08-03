@@ -767,8 +767,13 @@ function draw3D(){
   else if(r.shape==='galley'){W=Math.max(lays.A.L,lays.B.L);D=Math.max(100,bd*4.2);}
   else {W=lays.B.L;D=Math.max(lays.A.L,lays.C.L);}
   const hasIsland3D = r.type==='kitchen' && r.island.enabled && Number(r.walls.ISLAND)>0;
+  /* side walls (L/U shapes) project a cabinet run's depth in from the edge —
+     the island must clear that, or it collides with whatever's on that wall
+     (a corner unit, a fridge, etc.) instead of just being centered blindly */
+  const islLeftClear = (hasIsland3D && (r.shape==='L'||r.shape==='U')) ? bd+24 : 0;
+  const islRightClear = (hasIsland3D && r.shape==='U') ? bd+24 : 0;
   if(hasIsland3D){
-    W=Math.max(W, Number(r.walls.ISLAND));
+    W=Math.max(W, Number(r.walls.ISLAND)+islLeftClear+islRightClear);
     D=Math.max(D, bd+46+r.island.depth+(r.island.bar?25:0)+20);
   }
 
@@ -879,7 +884,9 @@ function draw3D(){
      never collides with the perimeter run above */
   function placeIsland(){
     const lay=layoutWall(r,'ISLAND'); if(!lay.L) return;
-    const idp=r.island.depth, ih=r.island.height, nearZ=bd+46, cx0=Math.max(0,(W-lay.L)/2);
+    const idp=r.island.depth, ih=r.island.height, nearZ=bd+46;
+    let cx0=islLeftClear+Math.max(0,(W-islLeftClear-islRightClear-lay.L)/2);
+    cx0=Math.max(islLeftClear, Math.min(cx0, Math.max(islLeftClear, W-islRightClear-lay.L)));
     function pos2(t,off){ return [cx0+t, nearZ+off]; }
     function put2(w,h,d,t,yC,off,mat,edges=true){
       const [px,pz]=pos2(t+w/2, off+d/2);
@@ -888,38 +895,50 @@ function draw3D(){
       if(edges){const e=edge(geo); e.position.copy(m.position); g.add(e);}
       return m;
     }
+    /* doors face the walkway side (off≈0, toward the main wall/range) — the
+       OPPOSITE convention from a wall run's doorFace, since here the "away
+       from the wall" direction is negative off, not positive */
     function doorFace2(w,h,t,yC,frontOff){
       if(r.fin.door===0) return;
       const inset=Math.min(3,w*.14), pw=w-2*inset, ph=h-2*inset;
       if(pw<3||ph<3) return;
       if(r.fin.door===2){
-        put2(pw,ph,1,t+inset,yC,frontOff+.5,mCabL,true);
+        put2(pw,ph,1,t+inset,yC,frontOff-.5,mCabL,true);
         const inset2=inset*.6, pw2=pw-2*inset2, ph2=ph-2*inset2;
-        if(pw2>2&&ph2>2) put2(pw2,ph2,.6,t+inset+inset2,yC,frontOff+1.1,mCabL,true);
-      } else put2(pw,ph,.8,t+inset,yC,frontOff-.9,mCabD,true);
+        if(pw2>2&&ph2>2) put2(pw2,ph2,.6,t+inset+inset2,yC,frontOff-1.1,mCabL,true);
+      } else put2(pw,ph,.8,t+inset,yC,frontOff+.9,mCabD,true);
     }
     const itoe=r.toe, ibh=ih-itoe;
+    const sinkItems=[];
     for(const it of lay.items){
+      if(it.type==='sink') sinkItems.push(it);
       if(it.type==='fridge'){
         const fw=it.w-.5, fx=it.x+.25, fMat=r.fin.fridgeBuiltIn?mCab:mAppl;
         put2(fw,FR_H,idp,fx,FR_H/2,0,fMat);
-        if(r.fin.fridgeBuiltIn) doorFace2(fw-3,FR_H-6,fx+1.5,FR_H/2,idp);
-        else { put2(.6,FR_H-6,.6,fx+fw/2-.3,FR_H/2,idp,mTrim,false);
-          put2(.7,14,1,fx+fw*.5-3.5,FR_H*.58,idp,mTrim,false);
-          put2(.7,14,1,fx+fw*.5+2.8,FR_H*.58,idp,mTrim,false); }
+        if(r.fin.fridgeBuiltIn) doorFace2(fw-3,FR_H-6,fx+1.5,FR_H/2,0);
+        else { put2(.6,FR_H-6,.6,fx+fw/2-.3,FR_H/2,-.3,mTrim,false);
+          put2(.7,14,1,fx+fw*.5-3.5,FR_H*.58,-.3,mTrim,false);
+          put2(.7,14,1,fx+fw*.5+2.8,FR_H*.58,-.3,mTrim,false); }
         continue;
       }
       if(it.type==='range'){
         const rw=it.w-.5, rx=it.x+.25;
-        put2(rw,36,idp,rx,18,0,mAppl); put2(rw-2,3,1,rx+1,35.5,idp-.5,mTrim,false);
+        put2(rw,36,idp,rx,18,0,mAppl); put2(rw-2,3,1,rx+1,35.5,.5,mTrim,false);
         continue;
       }
       put2(it.w-.5,ibh,idp,it.x+.25,itoe+ibh/2,0,mCab);
-      if(it.type!=='filler') doorFace2(it.w-.5,ibh-3,it.x+.25,itoe+ibh/2,idp);
+      if(it.type!=='filler') doorFace2(it.w-.5,ibh-3,it.x+.25,itoe+ibh/2,0);
       if(itoe>0) put2(it.w-6,itoe,idp-3,it.x+3,itoe/2,0,mCabD,false);
     }
     const overhang=r.island.bar?13:0;
     put2(lay.L,Math.max(1,r.ctT),idp+overhang,0,ih-r.ctT/2,0,mTop);
+    /* sink basin + faucet — faucet on the walkway side, same side as the
+       doors, so it doesn't sit in front of bar-seating overhang */
+    for(const it of sinkItems){
+      put2(it.w*.6,1.2,idp*.55,it.x+it.w*.2,ih+.4,idp*.22,mAppl,false);
+      put2(1,5,1,it.x+it.w*.47,ih+2.5,idp*.08,mTrim,false);
+      put2(3.2,1,1,it.x+it.w*.44,ih+5,idp*.16,mTrim,false);
+    }
     if(r.island.bar){
       const n=Math.max(1,r.island.barChairs);
       for(let i=0;i<n;i++){
