@@ -264,13 +264,14 @@ const FR_W=36, FR_H=70, RANGE_W=30, DW_W=24, SINK_W=36, LS=36, WD_W=27, WD_H=38,
 /* ---- room types ---- */
 const TYPES = {
   kitchen:{label:'Kitchen', baseH:34.5, baseD:24, toe:4.5, ctT:1.5, splash:18, upD:12, upH:42, uppers:true,
-    fixtures:{sink:'Sink (SB36)', dw:'Dishwasher 24"', range:'Range 30"', fridge:'Refrigerator 36"', window:'Window over sink'},
+    fixtures:{sink:'Sink (SB36)', dw:'Dishwasher 24"', range:'Range 30"', fridge:'Refrigerator 36"', window:'Window over sink',
+      trash:'Trash pullout 18"', spice:'Spice pullout 9"', ice:'Ice maker 15"'},
     sinks:['Undermount — Single','Undermount — Double','Farmhouse Apron']},
   bath:{label:'Bathroom', baseH:31, baseD:21, toe:4, ctT:1, splash:4, upD:0, upH:0, uppers:false,
-    fixtures:{vanity:'Vanity sink (VSB36)', vanity2:'Second sink (double vanity)', linen:'Linen tower 18"', toilet:'Toilet space 30"'},
+    fixtures:{vanity:'Vanity sink (VSB36)', vanity2:'Second sink (double vanity)', linen:'Linen tower 18"', toilet:'Toilet space 30"', trash:'Trash pullout 12"'},
     sinks:['Undermount Oval','Vessel Bowl','Integrated Top','Floating Vanity']},
   laundry:{label:'Laundry', baseH:34.5, baseD:24, toe:4.5, ctT:1.5, splash:18, upD:12, upH:36, uppers:true,
-    fixtures:{washer:'Washer 27"', dryer:'Dryer 27"', sink:'Utility sink (SB30)', tall:'Tall storage 18"'},
+    fixtures:{washer:'Washer 27"', dryer:'Dryer 27"', sink:'Utility sink (SB30)', tall:'Tall storage 18"', trash:'Trash pullout 12"'},
     sinks:['Drop-in Utility','Undermount — Single']},
   closet:{label:'Closet', baseH:0, baseD:14, toe:0, ctT:0, splash:0, upD:0, upH:0, uppers:false,
     fixtures:{drawers:'Drawer tower', shelves:'Shelf towers', rods:'Hanging rods'},
@@ -286,15 +287,35 @@ const TOPCOL = [
   {n:'Concrete', h:'#a8a8a3'}, {n:'Black Granite', h:'#33373a'}
 ];
 
+/* backfills fields added after a room may have been saved (island,
+   fridgeBuiltIn, etc.) — every load path (file open, Projects library,
+   autosave) runs loaded rooms through this so older saves don't crash on
+   code that now expects these fields to exist */
+function ensureRoomDefaults(r){
+  if(!r.walls) r.walls={A:96,B:120,C:120};
+  if(r.walls.ISLAND==null) r.walls.ISLAND=84;
+  if(!r.cfg) r.cfg={A:{},B:{},C:{}};
+  if(!r.cfg.ISLAND) r.cfg.ISLAND={};
+  if(!r.fin) r.fin={door:1,cab:4,top:0,sink:0};
+  if(r.fin.fridgeBuiltIn==null) r.fin.fridgeBuiltIn=false;
+  if(!r.island) r.island={enabled:false,depth:24,height:36,bar:false,barChairs:4,pendant:false,pendantCount:3};
+  if(r.included==null) r.included=true;
+  if(r.source===undefined) r.source=null;
+  return r;
+}
 function newRoom(type, name){
   const t = TYPES[type];
   const r = {
     id: Math.random().toString(36).slice(2,8), name: name || t.label, type,
     shape: type==='kitchen' ? 'L' : 'single', ceil: 96, upH: t.upH, upD: t.upD,
     baseH:t.baseH, baseD:t.baseD, toe:t.toe, ctT:t.ctT, splash:t.splash,
-    walls:{A: type==='kitchen'?150:96, B:120, C:120},
-    cfg:{A:{}, B:{}, C:{}},
-    fin:{door:1, cab:4, top:0, sink:0},
+    walls:{A: type==='kitchen'?150:96, B:120, C:120, ISLAND:84},
+    cfg:{A:{}, B:{}, C:{}, ISLAND:{}},
+    fin:{door:1, cab:4, top:0, sink:0, fridgeBuiltIn:false},
+    /* island length/fixtures live in walls.ISLAND / cfg.ISLAND above, reusing
+       the same layoutWall engine as a perimeter wall; this just holds the
+       island-specific extras that don't fit that shape */
+    island:{enabled:false, depth:24, height:36, bar:false, barChairs:4, pendant:false, pendantCount:3},
     included:true, source:null /* source: {page,bbox} when found by the AI takeoff, else null */
   };
   if(type==='kitchen'){ r.cfg.A={sink:true,dw:true,window:true}; r.cfg.B={range:true,fridge:true}; }
@@ -358,16 +379,21 @@ function layoutWall(r, id){
     if(cfg.range) fixed.push({code:'RANGE', w:RANGE_W, type:'range', label:'RANGE 30"'});
     if(cfg.sink){ if(cfg.dw) fixed.push({code:'DW', w:DW_W, type:'dw', label:'D/W'});
       fixed.push({code:'SB'+SINK_W, w:SINK_W, type:'sink', label:'SB'+SINK_W}); }
+    if(cfg.trash) fixed.push({code:'TRSH18', w:18, type:'trash', label:'TRASH PULL'});
+    if(cfg.spice) fixed.push({code:'SPC9', w:9, type:'spice', label:'SPICE'});
+    if(cfg.ice) fixed.push({code:'ICE15', w:15, type:'ice', label:'ICE MKR'});
     fridgeW = cfg.fridge ? FR_W : 0;
   } else if(r.type==='bath'){
     if(cfg.toilet) fixed.push({code:'WC', w:TOILET, type:'gap', label:'W.C.'});
     if(cfg.vanity) fixed.push({code:'VSB36', w:36, type:'sink', label:'VSB36'});
     if(cfg.vanity2) fixed.push({code:'VSB36', w:36, type:'sink', label:'VSB36'});
+    if(cfg.trash) fixed.push({code:'TRSH12', w:12, type:'trash', label:'TRASH PULL'});
     if(cfg.linen) endTall = {code:'LIN18', w:18, type:'tall', label:'LINEN', tall:TALL_H};
   } else if(r.type==='laundry'){
     if(cfg.washer) fixed.push({code:'WASH', w:WD_W, type:'washer', label:'WASHER'});
     if(cfg.dryer) fixed.push({code:'DRY', w:WD_W, type:'dryer', label:'DRYER'});
     if(cfg.sink) fixed.push({code:'SB30', w:30, type:'sink', label:'SB30'});
+    if(cfg.trash) fixed.push({code:'TRSH12', w:12, type:'trash', label:'TRASH PULL'});
     if(cfg.tall) endTall = {code:'T18', w:18, type:'tall', label:'TALL', tall:TALL_H};
   } else { /* closet */
     towerFill(usable, items, r);
@@ -514,8 +540,12 @@ function drawPlan(){
   else if(r.shape==='L'){W=A.L;H=B.L;}
   else if(r.shape==='galley'){W=Math.max(A.L,B.L);H=Math.max(100,bd*4);}
   else {W=B.L;H=Math.max(A.L,C.L);}
-  const pad=130, s=Math.min((cv.width-2*pad)/W,(cv.height-2*pad)/H);
-  const ox=(cv.width-W*s)/2, oy=(cv.height-H*s)/2, X=v=>ox+v*s, Y=v=>oy+v*s;
+  const hasIsland = r.type==='kitchen' && r.island.enabled && Number(r.walls.ISLAND)>0;
+  const islandH = hasIsland ? 50+r.island.depth+(r.island.bar?40:0) : 0;
+  if(hasIsland) W = Math.max(W, Number(r.walls.ISLAND));
+  const totalH = H+islandH;
+  const pad=130, s=Math.min((cv.width-2*pad)/W,(cv.height-2*pad)/totalH);
+  const ox=(cv.width-W*s)/2, oy=(cv.height-totalH*s)/2, X=v=>ox+v*s, Y=v=>oy+v*s;
   const cabF = tint(CABCOL[r.fin.cab].h,.72);
 
   function decorate(it,x,y,w,h,horiz){
@@ -563,6 +593,29 @@ function drawPlan(){
   else if(r.shape==='L'){runH(A,0,false);runV(B,0,false);}
   else if(r.shape==='galley'){runH(A,0,false);runH(B,H,true);}
   else {runH(B,0,false);runV(A,0,false);runV(C,W,true);}
+
+  /* freestanding island — its own block below the perimeter run, no wall
+     line behind it and no upper-cabinet dashed line (islands don't have
+     uppers, pendant lights are the overhead feature instead) */
+  if(hasIsland){
+    const lay=layoutWall(r,'ISLAND'), rd=r.island.depth, yTop=H+30;
+    for(const it of lay.items){
+      const x=X(it.x), w=it.w*s, y=Y(yTop), h=rd*s;
+      const fill = ['fridge','range'].includes(it.type)?'#f3e9e6': it.type==='filler'?'#e6ebef': cabF;
+      rect(c,x,y,w,h,2,'#1b2a3a',fill);
+      if(it.type!=='filler') txt(c,it.label,x+w/2,y+h/2,Math.min(16,w/3.6));
+      decorate(it,x,y,w,h,true);
+    }
+    const ce=Y(yTop)+(rd+1.5)*s; line(c,X(0),ce,X(lay.L),ce,1.5,'#8b7c55');
+    if(r.island.bar){
+      const oy2=Y(yTop)+rd*s+14, n=Math.max(1,r.island.barChairs);
+      line(c,X(0),oy2,X(lay.L),oy2,1.5,'#8b7c55',[4,3]);
+      for(let i=0;i<n;i++){ const cx=X((i+.5)*lay.L/n);
+        c.beginPath();c.arc(cx,oy2+16,7,0,7);c.strokeStyle='#5d6d80';c.lineWidth=1.5;c.stroke(); }
+    }
+    txt(c,'ISLAND'+(r.island.bar?' · BAR SEATING':''),X(lay.L/2),Y(yTop)-30,15,'#5d6d80');
+    dimH(c,X(0),X(lay.L),Y(yTop)-12,fmt(lay.L)+'"',14);
+  }
 
   txt(c, r.name.toUpperCase()+' — PLAN', X(W/2), Y(0)-82, 20, '#5d6d80');
   line(c,60,cv.height-46,118,cv.height-46,1.5,'#5d6d80',[8,6]);
@@ -713,6 +766,11 @@ function draw3D(){
   else if(r.shape==='L'){W=lays.A.L;D=lays.B.L;}
   else if(r.shape==='galley'){W=Math.max(lays.A.L,lays.B.L);D=Math.max(100,bd*4.2);}
   else {W=lays.B.L;D=Math.max(lays.A.L,lays.C.L);}
+  const hasIsland3D = r.type==='kitchen' && r.island.enabled && Number(r.walls.ISLAND)>0;
+  if(hasIsland3D){
+    W=Math.max(W, Number(r.walls.ISLAND));
+    D=Math.max(D, bd+46+r.island.depth+(r.island.bar?25:0)+20);
+  }
 
   flrTex.repeat.set(Math.max(1,W/28),Math.max(1,D/28));
   const half=Math.max(W,D)*.75+40;
@@ -752,10 +810,15 @@ function draw3D(){
     for(const it of lay.items){
       if(it.type==='fridge'){
         const fw=it.w-.5, fx=it.x+.25;
-        put(fw,FR_H,30,fx,FR_H/2,0,mAppl);
-        put(.6,FR_H-6,.6,fx+fw/2-.3,FR_H/2,30,mTrim,false); /* center door seam */
-        put(.7,14,1,fx+fw*.5-3.5,FR_H*.58,30,mTrim,false);  /* handles */
-        put(.7,14,1,fx+fw*.5+2.8,FR_H*.58,30,mTrim,false);
+        if(r.fin.fridgeBuiltIn){
+          put(fw,FR_H,bd,fx,FR_H/2,0,mCab); /* panel-ready: flush, cabinet-matched */
+          doorFace(fw-3,FR_H-6,fx+1.5,FR_H/2,bd);
+        } else {
+          put(fw,FR_H,30,fx,FR_H/2,0,mAppl);
+          put(.6,FR_H-6,.6,fx+fw/2-.3,FR_H/2,30,mTrim,false); /* center door seam */
+          put(.7,14,1,fx+fw*.5-3.5,FR_H*.58,30,mTrim,false);  /* handles */
+          put(.7,14,1,fx+fw*.5+2.8,FR_H*.58,30,mTrim,false);
+        }
         continue;
       }
       if(it.type==='range'){
@@ -790,8 +853,8 @@ function draw3D(){
       function it_sink(sp){return sp.some(i=>i.type==='sink');}
       function sinkCut(sp){ for(const i of sp) if(i.type==='sink'){
         put(i.w*.6,1.2,bd*.55,i.x+i.w*.2,counterH(r)+.4,bd*.18,mAppl,false);
-        put(1,5,1,i.x+i.w*.47,counterH(r)+2.5,bd*.78,mTrim,false);  /* faucet riser */
-        put(3.2,1,1,i.x+i.w*.44,counterH(r)+5,bd*.72,mTrim,false);  /* faucet spout */
+        put(1,5,1,i.x+i.w*.47,counterH(r)+2.5,bd*.06,mTrim,false);  /* faucet riser — at the back, against the wall/backsplash */
+        put(3.2,1,1,i.x+i.w*.44,counterH(r)+5,bd*.13,mTrim,false);  /* faucet spout, arcing slightly forward over the basin */
         if(r.type==='bath'&&r.fin.sink===1) put(i.w*.42,4,i.w*.42>bd*.5?bd*.5:i.w*.42,i.x+i.w*.29,counterH(r)+2,bd*.22,mAppl,false); } }
     }
     for(const u of (lay.uppers||[])){
@@ -810,10 +873,81 @@ function draw3D(){
       if(u.type!=='fillerU') doorFace(u.w-.5,u.h-3,u.x+.25,u.bottom+u.h/2,d);
     }
   }
+  /* freestanding island — a simplified sibling of placeRun, not a
+     generalization of it: no wall slab, no uppers (pendant lights instead),
+     positioned a fixed walkway clearance out from the back wall so it
+     never collides with the perimeter run above */
+  function placeIsland(){
+    const lay=layoutWall(r,'ISLAND'); if(!lay.L) return;
+    const idp=r.island.depth, ih=r.island.height, nearZ=bd+46, cx0=Math.max(0,(W-lay.L)/2);
+    function pos2(t,off){ return [cx0+t, nearZ+off]; }
+    function put2(w,h,d,t,yC,off,mat,edges=true){
+      const [px,pz]=pos2(t+w/2, off+d/2);
+      const geo=new THREE.BoxGeometry(w,h,d); const m=new THREE.Mesh(geo,mat);
+      m.position.set(px,yC,pz); m.castShadow=true; m.receiveShadow=true; g.add(m);
+      if(edges){const e=edge(geo); e.position.copy(m.position); g.add(e);}
+      return m;
+    }
+    function doorFace2(w,h,t,yC,frontOff){
+      if(r.fin.door===0) return;
+      const inset=Math.min(3,w*.14), pw=w-2*inset, ph=h-2*inset;
+      if(pw<3||ph<3) return;
+      if(r.fin.door===2){
+        put2(pw,ph,1,t+inset,yC,frontOff+.5,mCabL,true);
+        const inset2=inset*.6, pw2=pw-2*inset2, ph2=ph-2*inset2;
+        if(pw2>2&&ph2>2) put2(pw2,ph2,.6,t+inset+inset2,yC,frontOff+1.1,mCabL,true);
+      } else put2(pw,ph,.8,t+inset,yC,frontOff-.9,mCabD,true);
+    }
+    const itoe=r.toe, ibh=ih-itoe;
+    for(const it of lay.items){
+      if(it.type==='fridge'){
+        const fw=it.w-.5, fx=it.x+.25, fMat=r.fin.fridgeBuiltIn?mCab:mAppl;
+        put2(fw,FR_H,idp,fx,FR_H/2,0,fMat);
+        if(r.fin.fridgeBuiltIn) doorFace2(fw-3,FR_H-6,fx+1.5,FR_H/2,idp);
+        else { put2(.6,FR_H-6,.6,fx+fw/2-.3,FR_H/2,idp,mTrim,false);
+          put2(.7,14,1,fx+fw*.5-3.5,FR_H*.58,idp,mTrim,false);
+          put2(.7,14,1,fx+fw*.5+2.8,FR_H*.58,idp,mTrim,false); }
+        continue;
+      }
+      if(it.type==='range'){
+        const rw=it.w-.5, rx=it.x+.25;
+        put2(rw,36,idp,rx,18,0,mAppl); put2(rw-2,3,1,rx+1,35.5,idp-.5,mTrim,false);
+        continue;
+      }
+      put2(it.w-.5,ibh,idp,it.x+.25,itoe+ibh/2,0,mCab);
+      if(it.type!=='filler') doorFace2(it.w-.5,ibh-3,it.x+.25,itoe+ibh/2,idp);
+      if(itoe>0) put2(it.w-6,itoe,idp-3,it.x+3,itoe/2,0,mCabD,false);
+    }
+    const overhang=r.island.bar?13:0;
+    put2(lay.L,Math.max(1,r.ctT),idp+overhang,0,ih-r.ctT/2,0,mTop);
+    if(r.island.bar){
+      const n=Math.max(1,r.island.barChairs);
+      for(let i=0;i<n;i++){
+        const [sx,sz]=pos2((i+.5)*lay.L/n, idp+overhang-6), seatY=24;
+        const seat=new THREE.Mesh(new THREE.CylinderGeometry(6,6,2,16),mTrim);
+        seat.position.set(sx,seatY,sz); seat.castShadow=true; g.add(seat);
+        for(const [dx,dz] of [[-4,-4],[4,-4],[-4,4],[4,4]]){
+          const leg=new THREE.Mesh(new THREE.CylinderGeometry(.6,.6,seatY,8),mTrim);
+          leg.position.set(sx+dx,seatY/2,sz+dz); g.add(leg);
+        }
+      }
+    }
+    if(r.island.pendant){
+      const n=Math.max(1,r.island.pendantCount);
+      for(let i=0;i<n;i++){
+        const [px,pz]=pos2((i+.5)*lay.L/n, idp/2);
+        const cord=new THREE.Mesh(new THREE.CylinderGeometry(.25,.25,Math.max(1,ceil-ih-14),6),mTrim);
+        cord.position.set(px,(ceil+ih+14)/2,pz); g.add(cord);
+        const shade=new THREE.Mesh(new THREE.CylinderGeometry(4,5,6,16),mTrim);
+        shade.position.set(px,ih+11,pz); shade.castShadow=true; g.add(shade);
+      }
+    }
+  }
   if(r.shape==='single')placeRun(lays.A,'back');
   else if(r.shape==='L'){placeRun(lays.A,'back');placeRun(lays.B,'left');}
   else if(r.shape==='galley'){placeRun(lays.A,'back');placeRun(lays.B,'front');}
   else {placeRun(lays.B,'back');placeRun(lays.A,'left');placeRun(lays.C,'right');}
+  if(hasIsland3D) placeIsland();
 
   three.scene.add(g);
   three.center.set(W/2,42,D/2);
@@ -827,16 +961,20 @@ function placeCam(){ if(!three)return; const {theta,phi,r,center}=three;
 /* ================= SCHEDULE ================= */
 function buildSchedule(r){
   const rows={}; let baseLF=0, upperLF=0, tallN=0;
-  for(const id of wallIds(r)){
+  const idList = wallIds(r).slice();
+  const hasIsl = r.type==='kitchen' && r.island.enabled && Number(r.walls.ISLAND)>0;
+  if(hasIsl) idList.push('ISLAND');
+  for(const id of idList){
     const lay=layoutWall(r,id);
     for(const it of lay.items){
       if(['range','fridge','dw','corner','filler','gap','washer','dryer','rod'].includes(it.type)) continue;
       const tall=it.type==='tall'||it.type==='tower';
-      const h=tall?it.tall:r.baseH, d=r.baseD, k=it.code;
+      const h=tall?it.tall:(id==='ISLAND'?r.island.height-r.toe:r.baseH), d=id==='ISLAND'?r.island.depth:r.baseD, k=it.code;
       rows[k]=rows[k]||{code:k,kind:tall?'Tall':'Base',w:it.w,h,d,qty:0,walls:new Set()};
       rows[k].qty++; rows[k].walls.add(id);
       if(tall) tallN++; else baseLF+=it.w;
     }
+    if(id==='ISLAND') continue; /* islands have no upper cabinets — pendant lights instead, not part of the schedule */
     for(const u of (lay.uppers||[])){
       if(!u.code||u.code==='F'||u.h<=0||u.type==='mirror') continue;
       const d=u.type==='overRef'?24:r.upD, k=u.code;
@@ -1350,6 +1488,33 @@ function buildSidebar(){
     </div>`;
     }).join('')}
   </div>
+  ${r.type==='kitchen'?`
+  <div class="sect"><h3>Kitchen island</h3>
+    <label class="chk"><input type="checkbox" id="islEnabled" ${r.island.enabled?'checked':''}>Add a freestanding island</label>
+    ${r.island.enabled?(()=>{
+      const iov = layoutWall(r,'ISLAND').overflow;
+      return `
+      <div class="row2">
+        <div class="fld"><label>Length (in)</label><input type="number" step="0.5" id="islLen" value="${r.walls.ISLAND}"></div>
+        <div class="fld"><label>Depth (in)</label><input type="number" step="0.5" id="islDepth" value="${r.island.depth}"></div>
+      </div>
+      <div class="row2">
+        <div class="fld"><label>Counter height</label><select id="islHeight">
+          <option value="36" ${r.island.height==36?'selected':''}>Standard (36")</option>
+          <option value="42" ${r.island.height==42?'selected':''}>Bar height (42")</option>
+        </select></div>
+        <div class="fld"><label>Bar seating</label>
+          <label class="chk" style="margin-top:9px"><input type="checkbox" id="islBar" ${r.island.bar?'checked':''}>Overhang + stools</label></div>
+      </div>
+      ${r.island.bar?`<div class="fld"><label>Number of stools</label><input type="number" min="1" max="8" id="islChairs" value="${r.island.barChairs}"></div>`:''}
+      <label class="chk"><input type="checkbox" id="islPendant" ${r.island.pendant?'checked':''}>Decorative pendant lights</label>
+      ${r.island.pendant?`<div class="fld"><label>Pendant count</label><input type="number" min="1" max="6" id="islPendantN" value="${r.island.pendantCount}"></div>`:''}
+      <div class="wallcard" style="margin-top:10px"><h4>ISLAND FIXTURES</h4>
+        ${Object.entries(t.fixtures).filter(([k])=>k!=='window').map(([k,name])=>`<label class="chk"><input type="checkbox" class="wFix" data-wall="ISLAND" data-k="${k}" ${r.cfg.ISLAND&&r.cfg.ISLAND[k]?'checked':''}>${name}</label>`).join('')}
+        ${iov>0.5?`<div class="hint" style="color:var(--dim);font-weight:600">⚠ These fixtures need ~${fmt(Number(r.walls.ISLAND)+iov)}" — island is only ${fmt(r.walls.ISLAND)}" long. Uncheck a fixture or lengthen the island.</div>`:''}
+      </div>`;
+    })():''}
+  </div>`:''}
   <div class="sect"><h3>Finishes & options</h3>
     <div class="fld"><label>Door / panel style</label>
       <div class="segs" id="segDoor">${DOORS.map((d,i)=>`<button class="${r.fin.door===i?'on':''}" data-i="${i}">${d}</button>`).join('')}</div></div>
@@ -1359,6 +1524,7 @@ function buildSidebar(){
       <div class="swrow" id="swTop">${TOPCOL.map((s,i)=>`<div class="sw ${r.fin.top===i?'on':''}" data-i="${i}"><div class="c" style="background:${s.h}"></div><div class="n">${s.n}</div></div>`).join('')}</div></div>`:''}
     ${t.sinks.length?`<div class="fld"><label>Sink style</label><select id="rSink">
       ${t.sinks.map((s,i)=>`<option value="${i}" ${r.fin.sink===i?'selected':''}>${s}</option>`).join('')}</select></div>`:''}
+    ${r.type==='kitchen'?`<label class="chk"><input type="checkbox" id="rFridgeBI" ${r.fin.fridgeBuiltIn?'checked':''}>Panel-ready (built-in) refrigerator look</label>`:''}
     <p class="hint">Selections show in the 3D view and print on the drawing set for the shop.</p>
   </div>`;
 
@@ -1373,6 +1539,15 @@ function buildSidebar(){
   $('swCab').querySelectorAll('.sw').forEach(s=>s.addEventListener('click',()=>{r.fin.cab=Number(s.dataset.i);buildSidebar();render();}));
   const st=$('swTop'); if(st) st.querySelectorAll('.sw').forEach(s=>s.addEventListener('click',()=>{r.fin.top=Number(s.dataset.i);buildSidebar();render();}));
   const sk=$('rSink'); if(sk) sk.addEventListener('change',()=>{r.fin.sink=Number(sk.value);render();});
+  const rfb=$('rFridgeBI'); if(rfb) rfb.addEventListener('change',()=>{r.fin.fridgeBuiltIn=rfb.checked;render();});
+  const ie=$('islEnabled'); if(ie) ie.addEventListener('change',()=>{r.island.enabled=ie.checked;buildSidebar();render();});
+  const il=$('islLen'); if(il) il.addEventListener('input',()=>{r.walls.ISLAND=Number(il.value)||0;render();});
+  const idp=$('islDepth'); if(idp) idp.addEventListener('input',()=>{r.island.depth=Number(idp.value)||24;render();});
+  const ih=$('islHeight'); if(ih) ih.addEventListener('change',()=>{r.island.height=Number(ih.value)||36;render();});
+  const ib=$('islBar'); if(ib) ib.addEventListener('change',()=>{r.island.bar=ib.checked;buildSidebar();render();});
+  const ic=$('islChairs'); if(ic) ic.addEventListener('input',()=>{r.island.barChairs=Math.max(1,Number(ic.value)||4);render();});
+  const ip=$('islPendant'); if(ip) ip.addEventListener('change',()=>{r.island.pendant=ip.checked;buildSidebar();render();});
+  const ipn=$('islPendantN'); if(ipn) ipn.addEventListener('input',()=>{r.island.pendantCount=Math.max(1,Number(ipn.value)||3);render();});
 }
 function buildElevPick(){
   $('elevPick').innerHTML=wallIds().map(i=>`<button data-w="${i}" class="${i===elevWall?'on':''}">Wall ${i}</button>`).join('');
@@ -1440,7 +1615,7 @@ $('fileIn').addEventListener('change',e=>{
   const f=e.target.files[0]; if(!f) return;
   f.text().then(t=>{try{
     const d=JSON.parse(t);
-    if(d.state&&d.state.rooms){ state.rooms=d.state.rooms; state.active=0; state.sourcePages=d.state.sourcePages||[]; }
+    if(d.state&&d.state.rooms){ state.rooms=d.state.rooms.map(ensureRoomDefaults); state.active=0; state.sourcePages=d.state.sourcePages||[]; }
     $('pName').value=d.project?.name||''; $('pClient').value=d.project?.client||'';
     currentProjectId=null;
     gotoPage('pDesign'); rebuildAll();
@@ -1484,7 +1659,7 @@ function saveCurrentProject(){
 }
 function openProject(id){
   const lib=loadProjectsLib(); const p=lib.find(x=>x.id===id); if(!p) return;
-  if(p.state && p.state.rooms){ state.rooms=p.state.rooms; state.active=0; state.sourcePages=p.state.sourcePages||[]; }
+  if(p.state && p.state.rooms){ state.rooms=p.state.rooms.map(ensureRoomDefaults); state.active=0; state.sourcePages=p.state.sourcePages||[]; }
   $('pName').value=p.name||''; $('pClient').value=p.client||'';
   currentProjectId=id;
   $('projModal').classList.remove('on');
@@ -1509,7 +1684,7 @@ $('btnSaveToLib').addEventListener('click',saveCurrentProject);
 /* autosave (best-effort) */
 try{
   const saved=localStorage.getItem('cc2');
-  if(saved){const d=JSON.parse(saved); if(d.rooms){state.rooms=d.rooms;state.active=0;state.sourcePages=d.sourcePages||[];}
+  if(saved){const d=JSON.parse(saved); if(d.rooms){state.rooms=d.rooms.map(ensureRoomDefaults);state.active=0;state.sourcePages=d.sourcePages||[];}
     if(d.name)$('pName').value=d.name; if(d.client)$('pClient').value=d.client;}
   const k=localStorage.getItem('cc_key'); if(k)$('apiKey').value=k;
   setInterval(()=>{try{localStorage.setItem('cc2',JSON.stringify({rooms:state.rooms,sourcePages:state.sourcePages,name:$('pName').value,client:$('pClient').value}));}catch(e){}},3000);
