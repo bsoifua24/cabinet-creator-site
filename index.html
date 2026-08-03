@@ -15,22 +15,38 @@
   *{box-sizing:border-box;margin:0;padding:0}
   body{font-family:var(--sans);background:var(--paper);color:var(--ink);font-size:14px}
 
-  header{background:var(--sheet);border-bottom:2px solid var(--ink);display:flex;align-items:stretch}
-  .tb-cell{padding:10px 16px;border-right:1px solid var(--line)}
-  .tb-cell .lbl{font:600 10px var(--mono);letter-spacing:.12em;color:var(--ink-soft);text-transform:uppercase}
-  .tb-cell .val{font:600 16px var(--sans)}
-  .tb-logo{display:flex;flex-direction:column;justify-content:center;padding:10px 20px;border-right:2px solid var(--ink)}
-  .tb-logo b{font:700 19px var(--sans)}
-  .tb-logo span{font:500 10px var(--mono);letter-spacing:.18em;color:var(--dim)}
-  .tb-cell input{border:none;font:600 16px var(--sans);color:var(--ink);width:100%;background:transparent;outline:none;border-bottom:1px dashed transparent}
-  .tb-cell input:focus{border-bottom:1px dashed var(--dim)}
+  header{background:var(--sheet);border-bottom:1px solid var(--line);display:flex;align-items:stretch;box-shadow:0 1px 4px rgba(27,42,58,.06);position:relative;z-index:2}
+  .tb-cell{padding:13px 24px;border-right:1px solid var(--line);display:flex;flex-direction:column;justify-content:center;gap:5px;transition:background .15s}
+  .tb-cell:focus-within{background:var(--hatch)}
+  .tb-cell .lbl{font:600 9.5px var(--mono);letter-spacing:.16em;color:var(--ink-soft);text-transform:uppercase}
+  .tb-cell .val{font:600 16px var(--sans);color:var(--ink)}
+  .tb-logo{display:flex;flex-direction:column;justify-content:center;gap:4px;padding:13px 28px;border-right:1px solid var(--line)}
+  .tb-logo b{font:700 20px var(--sans);letter-spacing:-.01em;color:var(--ink)}
+  .tb-logo span{font:600 9.5px var(--mono);letter-spacing:.2em;color:var(--dim)}
+  .tb-cell input{border:none;font:600 16px var(--sans);color:var(--ink);width:100%;background:transparent;outline:none;padding:0}
   header .spacer{flex:1}
-  header .actions{display:flex;align-items:center;gap:8px;padding:0 16px}
-  button{font:600 13px var(--sans);border:1.5px solid var(--ink);background:var(--sheet);color:var(--ink);padding:8px 14px;cursor:pointer;border-radius:2px}
+  header .actions{display:flex;align-items:center;gap:10px;padding:0 24px}
+  button{font:600 13px var(--sans);border:1.5px solid var(--ink);background:var(--sheet);color:var(--ink);padding:9px 16px;cursor:pointer;border-radius:3px;transition:background .15s,color .15s,border-color .15s,box-shadow .15s}
   button:hover{background:var(--ink);color:#fff}
   button.primary{background:var(--dim);border-color:var(--dim);color:#fff}
-  button.primary:hover{background:#a5361f;border-color:#a5361f}
+  button.primary:hover{background:#a5361f;border-color:#a5361f;box-shadow:0 2px 8px rgba(196,69,44,.25)}
   button.ghost{border-color:var(--line);color:var(--ink-soft)}
+
+  /* projects library modal */
+  .modal-overlay{display:none;position:fixed;inset:0;background:rgba(27,42,58,.45);z-index:50;align-items:center;justify-content:center}
+  .modal-overlay.on{display:flex}
+  .modal{background:var(--sheet);border:1px solid var(--line);border-radius:4px;box-shadow:0 12px 36px rgba(27,42,58,.28);width:min(560px,92vw);max-height:82vh;display:flex;flex-direction:column}
+  .modal-head{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--line)}
+  .modal-head h3{font:600 13px var(--mono);letter-spacing:.1em;text-transform:uppercase}
+  .modal-head button{padding:2px 10px;font-size:20px;line-height:1;border-radius:3px;border-color:var(--line);color:var(--ink-soft)}
+  .modal-body{padding:16px 20px;overflow-y:auto}
+  .proj-row{display:flex;align-items:center;justify-content:space-between;padding:10px 12px;border:1px solid var(--line);border-radius:3px;margin-bottom:8px;gap:10px}
+  .proj-row.archived{opacity:.55}
+  .proj-row .meta{display:flex;flex-direction:column;gap:2px;overflow:hidden}
+  .proj-row .meta b{font:600 14px var(--sans);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .proj-row .meta span{font:500 11px var(--mono);color:var(--ink-soft)}
+  .proj-row .acts{display:flex;gap:6px;flex-shrink:0}
+  .proj-row .acts button{padding:5px 10px;font-size:11px}
 
   /* top-level pages */
   .pagenav{display:flex;background:var(--sheet);border-bottom:1px solid var(--line);padding:0 20px}
@@ -132,17 +148,29 @@
 
 <header>
   <div class="tb-logo"><b>Cabinet Creator</b><span>PLAN TAKEOFF · DESIGN · PRELIM SET</span></div>
-  <div class="tb-cell" style="min-width:180px"><div class="lbl">Project</div><input id="pName" value="Untitled Residence"></div>
-  <div class="tb-cell" style="min-width:150px"><div class="lbl">Client</div><input id="pClient" value=""></div>
+  <div class="tb-cell" style="min-width:220px"><div class="lbl">Project</div><input id="pName" value="Untitled Residence"></div>
+  <div class="tb-cell" style="min-width:180px"><div class="lbl">Client</div><input id="pClient" value=""></div>
   <div class="tb-cell"><div class="lbl">Date</div><div class="val" id="pDate"></div></div>
   <div class="spacer"></div>
   <div class="actions">
+    <button id="btnProjects">My Projects</button>
     <button id="btnSave">Save file</button>
     <button id="btnLoad">Open file</button>
     <input type="file" id="fileIn" accept=".json" hidden>
     <button class="primary" id="btnPrint">Print drawing set</button>
   </div>
 </header>
+
+<div class="modal-overlay" id="projModal">
+  <div class="modal">
+    <div class="modal-head"><h3>My Projects</h3><button id="projClose">&times;</button></div>
+    <div class="modal-body">
+      <button class="primary" id="btnSaveToLib" style="width:100%;margin-bottom:14px">Save current project to this list</button>
+      <div id="projList"></div>
+      <p class="hint" style="margin-top:12px">Saved in this browser only — use "Save file" for a portable backup you can move between computers.</p>
+    </div>
+  </div>
+</div>
 
 <div class="pagenav">
   <button class="on" data-p="pImport">1 · Import plans</button>
@@ -357,7 +385,7 @@ function layoutWall(r, id){
   let fi = 0;
   greedyFill(per, items, fillCode, false);
   for(const f of fixed){ items.push(f); fi++;
-    greedyFill(fi===slots-1 ? fill - per*(slots-1) + per : per, items, fillCode, f.type==='range'); }
+    greedyFill(fi===slots-1 ? fill - per*(slots-1) : per, items, fillCode, f.type==='range'); }
   if(cr.end) items.push(cr.big && r.type==='kitchen'
     ? {code:'LS36', w:LS, type:'ls', label:'LS36'}
     : {code:'CR', w:24, type:'corner', label:'CNR'});
@@ -1306,20 +1334,79 @@ $('fileIn').addEventListener('change',e=>{
   const f=e.target.files[0]; if(!f) return;
   f.text().then(t=>{try{
     const d=JSON.parse(t);
-    if(d.state&&d.state.rooms){ state.rooms=d.state.rooms; state.active=0; }
+    if(d.state&&d.state.rooms){ state.rooms=d.state.rooms; state.active=0; state.sourcePages=d.state.sourcePages||[]; }
     $('pName').value=d.project?.name||''; $('pClient').value=d.project?.client||'';
+    currentProjectId=null;
     gotoPage('pDesign'); rebuildAll();
   }catch(err){alert('Could not read that file.');}});
   e.target.value='';
 });
 
+/* ================= PROJECTS LIBRARY (saved in this browser) ================= */
+let currentProjectId=null;
+function loadProjectsLib(){ try{ return JSON.parse(localStorage.getItem('cc_projects')||'[]'); }catch(e){ return []; } }
+function saveProjectsLib(arr){ try{ localStorage.setItem('cc_projects', JSON.stringify(arr)); }catch(e){} }
+function genId(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,7); }
+function renderProjectsList(){
+  const lib=loadProjectsLib().sort((a,b)=>b.updatedAt-a.updatedAt);
+  const list=$('projList');
+  if(!lib.length){ list.innerHTML='<p class="hint">No saved projects yet — use the button above to save this one.</p>'; return; }
+  list.innerHTML=lib.map(p=>`
+    <div class="proj-row ${p.archived?'archived':''}">
+      <div class="meta">
+        <b>${p.name||'Untitled'}${p.id===currentProjectId?' (current)':''}</b>
+        <span>${p.client?p.client+' · ':''}${new Date(p.updatedAt).toLocaleDateString('en-US',{month:'2-digit',day:'2-digit',year:'numeric'})}${p.archived?' · Archived':''}</span>
+      </div>
+      <div class="acts">
+        <button class="projOpen" data-id="${p.id}">Open</button>
+        <button class="projArchive" data-id="${p.id}">${p.archived?'Unarchive':'Archive'}</button>
+        <button class="projDelete" data-id="${p.id}">Delete</button>
+      </div>
+    </div>`).join('');
+  list.querySelectorAll('.projOpen').forEach(b=>b.addEventListener('click',()=>openProject(b.dataset.id)));
+  list.querySelectorAll('.projArchive').forEach(b=>b.addEventListener('click',()=>toggleArchive(b.dataset.id)));
+  list.querySelectorAll('.projDelete').forEach(b=>b.addEventListener('click',()=>deleteProject(b.dataset.id)));
+}
+function saveCurrentProject(){
+  const lib=loadProjectsLib();
+  const id=currentProjectId||genId();
+  const entry={id, name:$('pName').value||'Untitled', client:$('pClient').value, updatedAt:Date.now(), archived:false, state};
+  const i=lib.findIndex(p=>p.id===id);
+  if(i>=0) lib[i]=entry; else lib.push(entry);
+  saveProjectsLib(lib); currentProjectId=id;
+  renderProjectsList();
+}
+function openProject(id){
+  const lib=loadProjectsLib(); const p=lib.find(x=>x.id===id); if(!p) return;
+  if(p.state && p.state.rooms){ state.rooms=p.state.rooms; state.active=0; state.sourcePages=p.state.sourcePages||[]; }
+  $('pName').value=p.name||''; $('pClient').value=p.client||'';
+  currentProjectId=id;
+  $('projModal').classList.remove('on');
+  gotoPage('pDesign'); rebuildAll();
+}
+function toggleArchive(id){
+  const lib=loadProjectsLib(); const p=lib.find(x=>x.id===id); if(!p) return;
+  p.archived=!p.archived; saveProjectsLib(lib); renderProjectsList();
+}
+function deleteProject(id){
+  const lib=loadProjectsLib(); const p=lib.find(x=>x.id===id); if(!p) return;
+  if(!confirm(`Delete "${p.name||'Untitled'}" permanently? This can't be undone.`)) return;
+  saveProjectsLib(lib.filter(x=>x.id!==id));
+  if(currentProjectId===id) currentProjectId=null;
+  renderProjectsList();
+}
+$('btnProjects').addEventListener('click',()=>{ renderProjectsList(); $('projModal').classList.add('on'); });
+$('projClose').addEventListener('click',()=>$('projModal').classList.remove('on'));
+$('projModal').addEventListener('click',e=>{ if(e.target.id==='projModal') $('projModal').classList.remove('on'); });
+$('btnSaveToLib').addEventListener('click',saveCurrentProject);
+
 /* autosave (best-effort) */
 try{
   const saved=localStorage.getItem('cc2');
-  if(saved){const d=JSON.parse(saved); if(d.rooms){state.rooms=d.rooms;state.active=0;}
+  if(saved){const d=JSON.parse(saved); if(d.rooms){state.rooms=d.rooms;state.active=0;state.sourcePages=d.sourcePages||[];}
     if(d.name)$('pName').value=d.name; if(d.client)$('pClient').value=d.client;}
   const k=localStorage.getItem('cc_key'); if(k)$('apiKey').value=k;
-  setInterval(()=>{try{localStorage.setItem('cc2',JSON.stringify({rooms:state.rooms,name:$('pName').value,client:$('pClient').value}));}catch(e){}},3000);
+  setInterval(()=>{try{localStorage.setItem('cc2',JSON.stringify({rooms:state.rooms,sourcePages:state.sourcePages,name:$('pName').value,client:$('pClient').value}));}catch(e){}},3000);
 }catch(e){}
 
 $('pDate').textContent=new Date().toLocaleDateString('en-US',{month:'2-digit',day:'2-digit',year:'numeric'});
