@@ -452,8 +452,8 @@ function tint(hex,f){const n=parseInt(hex.slice(1),16);const r=n>>16&255,g=n>>8&
 /* door style detail inside a 2D box */
 function doorDetail(c,x,y,w,h,style,scale){
   const i = 3.5*scale; if(w<5*i||h<5*i) return;
-  if(style>=1) rect(c,x+i,y+i,w-2*i,h-2*i,1.3,'#00000033');
-  if(style===2) rect(c,x+i*1.8,y+i*1.8,w-3.6*i,h-3.6*i,1,'#00000026');
+  if(style>=1) rect(c,x+i,y+i,w-2*i,h-2*i,1.8,'#00000066');
+  if(style===2) rect(c,x+i*1.8,y+i*1.8,w-3.6*i,h-3.6*i,1.4,'#0000004d');
 }
 
 /* ================= PLAN VIEW ================= */
@@ -631,8 +631,8 @@ function draw3D(){
 
   const cabHex=parseInt(CABCOL[r.fin.cab].h.slice(1),16), topHex=parseInt(TOPCOL[r.fin.top].h.slice(1),16);
   const mCab=new THREE.MeshLambertMaterial({color:cabHex});
-  const mCabD=new THREE.MeshLambertMaterial({color:new THREE.Color(cabHex).multiplyScalar(.82)});
-  const mCabL=new THREE.MeshLambertMaterial({color:new THREE.Color(cabHex).multiplyScalar(1.12)});
+  const mCabD=new THREE.MeshLambertMaterial({color:new THREE.Color(cabHex).multiplyScalar(.7)});
+  const mCabL=new THREE.MeshLambertMaterial({color:new THREE.Color(cabHex).multiplyScalar(1.25)});
   const mTop=new THREE.MeshLambertMaterial({color:topHex});
   const mAppl=new THREE.MeshLambertMaterial({color:0xb9c2cb});
   const mWall=new THREE.MeshLambertMaterial({color:0xf5f2ec});
@@ -664,12 +664,18 @@ function draw3D(){
       if(edges){const e=edge(geo);e.position.copy(m.position);e.rotation.copy(m.rotation);g.add(e);}
       return m;
     }
-    function doorFace(w,h,t,yC,frontOff){ /* panel-style detail on the door face */
-      if(r.fin.door===0) return;
+    function doorFace(w,h,t,yC,frontOff){ /* panel-style detail on the door face — edges on so the
+      style reads clearly regardless of lighting angle, not just from a subtle shading difference */
+      if(r.fin.door===0) return; /* slab: flat door, nothing to draw */
       const inset=Math.min(3,w*.14), pw=w-2*inset, ph=h-2*inset;
       if(pw<3||ph<3) return;
-      const raised = r.fin.door===2;
-      put(pw, ph, .7, t+inset, yC, frontOff + (raised? .3 : -.45), raised?mCabL:mCabD, false);
+      if(r.fin.door===2){ /* raised panel: stepped bevel, two nested boxes */
+        put(pw, ph, 1, t+inset, yC, frontOff+.5, mCabL, true);
+        const inset2=inset*.6, pw2=pw-2*inset2, ph2=ph-2*inset2;
+        if(pw2>2 && ph2>2) put(pw2, ph2, .6, t+inset+inset2, yC, frontOff+1.1, mCabL, true);
+      } else { /* shaker: single recessed panel, crisp routed-groove outline */
+        put(pw, ph, .8, t+inset, yC, frontOff-.9, mCabD, true);
+      }
     }
     {const geo=new THREE.BoxGeometry(lay.L,ceil,5);const m=new THREE.Mesh(geo,mWall);
      const [px,pz]=pos(lay.L/2,-2.5); m.position.set(px,ceil/2,pz); m.rotation.y=rotY; g.add(m);}
@@ -1207,10 +1213,19 @@ function buildRoomBar(){
     `<div class="rchip ${i===state.active?'on':''}" data-i="${i}">${r.name}<i data-x="${i}">×</i></div>`).join('') +
     `<select id="addType"><option value="">+ Add room…</option>
      <option value="kitchen">Kitchen</option><option value="bath">Bathroom</option>
-     <option value="laundry">Laundry</option><option value="closet">Closet</option></select>`;
+     <option value="laundry">Laundry</option><option value="closet">Closet</option></select>
+     <button id="btnClearRooms" class="ghost" style="padding:6px 12px;font-size:11px">Clear all</button>`;
   bar.querySelectorAll('.rchip').forEach(ch=>ch.addEventListener('click',e=>{
-    if(e.target.dataset.x!==undefined){ if(state.rooms.length>1){ state.rooms.splice(Number(e.target.dataset.x),1);
-        state.active=Math.max(0,state.active-1); rebuildAll(); } return; }
+    if(e.target.dataset.x!==undefined){
+      if(state.rooms.length>1){
+        const di=Number(e.target.dataset.x);
+        state.rooms.splice(di,1);
+        if(di<state.active) state.active--;
+        else state.active=Math.min(state.active, state.rooms.length-1);
+        rebuildAll();
+      }
+      return;
+    }
     state.active=Number(ch.dataset.i); rebuildAll();
   }));
   $('addType').addEventListener('change',e=>{
@@ -1218,6 +1233,12 @@ function buildRoomBar(){
     const n = state.rooms.filter(r=>r.type===e.target.value).length;
     state.rooms.push(newRoom(e.target.value, TYPES[e.target.value].label+(n?` ${n+1}`:'')));
     state.active=state.rooms.length-1; rebuildAll();
+  });
+  $('btnClearRooms').addEventListener('click',()=>{
+    if(!confirm('Clear every room in this project and start fresh with one blank kitchen? This can\'t be undone — save first if you want to keep it.')) return;
+    state.rooms=[newRoom('kitchen')]; state.active=0; state.sourcePages=[];
+    currentProjectId=null;
+    rebuildAll();
   });
 }
 function buildSidebar(){
