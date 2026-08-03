@@ -433,7 +433,6 @@ function layoutWall(r, id){
       else if(it.type==='fridge'){ const h=Math.max(12,uT-72); u={code:'W'+it.w+Math.round(h)+'-24D', w:it.w, h, bottom:72, type:'overRef'}; }
       else if(it.type==='tall') u = null;
       else if(it.type==='sink' && r.cfg[id]?.window) u = {code:'', w:it.w, h:0, bottom:uB, type:'window'};
-      else if(it.type==='dw' && r.cfg[id]?.window) u = {code:'', w:it.w, h:0, bottom:uB, type:'window'};
       else if(it.type==='filler') u = {code:'F', w:it.w, h:uH, bottom:uB, type:'fillerU'};
       else u = {code:'W'+Math.round(it.w)+r.upH, w:it.w, h:uH, bottom:uB, type:'upper'};
       if(u){ u.x = it.x; ups.push(u); }
