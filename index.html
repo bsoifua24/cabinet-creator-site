@@ -406,6 +406,15 @@ function layoutWall(r, id){
       const adj = list.filter(i=>['base','filler','rod','tower','db'].includes(i.type)).pop();
       if(adj) adj.w += (L-sum);
     }
+    /* fold any awkwardly narrow leftover filler into the cabinet next to it
+       instead of showing a small standalone sliver */
+    for(let i=list.length-1;i>=0;i--){
+      const it=list[i];
+      if(it.type!=='filler' || it.w>=10) continue;
+      const prev=list[i-1], next=list[i+1];
+      if(prev && (prev.type==='base'||prev.type==='db')){ prev.w+=it.w; list.splice(i,1); }
+      else if(next && (next.type==='base'||next.type==='db')){ next.w+=it.w; list.splice(i,1); }
+    }
     let x=0; for(const it of list){ it.x=x; x+=it.w; }
   }
   function ride(list){
@@ -462,7 +471,7 @@ function woodGrainCanvas(){
     for(let x=0;x<=256;x+=8){ const yy=y+Math.sin((x+i*13)/38)*amp; x===0?c.moveTo(x,yy):c.lineTo(x,yy); }
     c.stroke();
   }
-  const tex=new THREE.CanvasTexture(cv); tex.wrapS=tex.wrapT=THREE.RepeatWrapping; return tex;
+  const tex=new THREE.CanvasTexture(cv); tex.wrapS=tex.wrapT=THREE.RepeatWrapping; tex.encoding=THREE.sRGBEncoding; return tex;
 }
 function stoneTexture(fine){
   const cv=document.createElement('canvas'); cv.width=256; cv.height=256;
@@ -473,7 +482,7 @@ function stoneTexture(fine){
     c.fillStyle = Math.random()<.5 ? `rgba(255,255,255,${.05+Math.random()*.12})` : `rgba(0,0,0,${.04+Math.random()*.1})`;
     c.beginPath(); c.arc(x,y,rad,0,7); c.fill();
   }
-  const tex=new THREE.CanvasTexture(cv); tex.wrapS=tex.wrapT=THREE.RepeatWrapping; return tex;
+  const tex=new THREE.CanvasTexture(cv); tex.wrapS=tex.wrapT=THREE.RepeatWrapping; tex.encoding=THREE.sRGBEncoding; return tex;
 }
 function plankFloorCanvas(){
   const cv=document.createElement('canvas'); cv.width=256; cv.height=256;
@@ -485,7 +494,7 @@ function plankFloorCanvas(){
     c.strokeStyle=`rgba(${Math.random()<.5?'0,0,0':'255,255,255'},${.04+Math.random()*.07})`;
     c.lineWidth=.6+Math.random(); c.beginPath(); c.moveTo(x0,y); c.lineTo(x0+len,y+(Math.random()-.5)*4); c.stroke();
   }
-  const tex=new THREE.CanvasTexture(cv); tex.wrapS=tex.wrapT=THREE.RepeatWrapping; return tex;
+  const tex=new THREE.CanvasTexture(cv); tex.wrapS=tex.wrapT=THREE.RepeatWrapping; tex.encoding=THREE.sRGBEncoding; return tex;
 }
 
 /* door style detail inside a 2D box */
@@ -656,11 +665,13 @@ function draw3D(){
     const renderer=new THREE.WebGLRenderer({canvas:cv,antialias:true});
     renderer.setSize(cv.width,cv.height,false);
     renderer.shadowMap.enabled=true; renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+    renderer.outputEncoding=THREE.sRGBEncoding; renderer.toneMapping=THREE.ACESFilmicToneMapping; renderer.toneMappingExposure=1.05;
     const scene=new THREE.Scene(); scene.background=new THREE.Color(0xeef1f4);
     const cam=new THREE.PerspectiveCamera(45,cv.width/cv.height,1,5000);
     scene.add(new THREE.HemisphereLight(0xfaf6ee,0xb0a898,.55));
     const sun=new THREE.DirectionalLight(0xfff6e8,.85); sun.position.set(220,420,320);
-    sun.castShadow=true; sun.shadow.mapSize.set(1024,1024); sun.shadow.camera.near=10; sun.shadow.camera.far=1800;
+    sun.castShadow=true; sun.shadow.mapSize.set(2048,2048); sun.shadow.camera.near=10; sun.shadow.camera.far=1800;
+    sun.shadow.bias=-.0015;
     scene.add(sun); scene.add(sun.target);
     const fill=new THREE.DirectionalLight(0xdce8f5,.35); fill.position.set(-260,180,-200); scene.add(fill);
     three={renderer,scene,cam,sun,group:null,theta:-.7,phi:1.15,r:0,center:new THREE.Vector3()};
@@ -692,6 +703,7 @@ function draw3D(){
   const mMir=new THREE.MeshStandardMaterial({color:0xcfe0ea, roughness:.15, metalness:.2});
   const mSash=new THREE.MeshStandardMaterial({color:0xffffff, roughness:.55});
   const mGlass=new THREE.MeshStandardMaterial({color:0xbfd8e6, transparent:true, opacity:.5, roughness:.05});
+  const mTrim=new THREE.MeshStandardMaterial({color:0x2b2b2d, roughness:.35, metalness:.7});
   const edgeCol=lum(CABCOL[r.fin.cab].h)>.5?0x6b6b66:0x1f1a14;
   const edge=geo=>new THREE.LineSegments(new THREE.EdgesGeometry(geo),new THREE.LineBasicMaterial({color:edgeCol}));
 
@@ -739,8 +751,20 @@ function draw3D(){
     {const geo=new THREE.BoxGeometry(lay.L,ceil,5);const m=new THREE.Mesh(geo,mWall);
      const [px,pz]=pos(lay.L/2,-2.5); m.position.set(px,ceil/2,pz); m.rotation.y=rotY; m.receiveShadow=true; g.add(m);}
     for(const it of lay.items){
-      if(it.type==='fridge'){put(it.w-2,FR_H,30,it.x+1,FR_H/2,0,mAppl);continue;}
-      if(it.type==='range'){put(it.w-1,36,26,it.x+.5,18,0,mAppl);continue;}
+      if(it.type==='fridge'){
+        const fw=it.w-.5, fx=it.x+.25;
+        put(fw,FR_H,30,fx,FR_H/2,0,mAppl);
+        put(.6,FR_H-6,.6,fx+fw/2-.3,FR_H/2,30,mTrim,false); /* center door seam */
+        put(.7,14,1,fx+fw*.5-3.5,FR_H*.58,30,mTrim,false);  /* handles */
+        put(.7,14,1,fx+fw*.5+2.8,FR_H*.58,30,mTrim,false);
+        continue;
+      }
+      if(it.type==='range'){
+        const rw=it.w-.5, rx=it.x+.25;
+        put(rw,36,26,rx,18,0,mAppl);
+        put(rw-2,3,1,rx+1,35.5,25.5,mTrim,false); /* control panel strip */
+        continue;
+      }
       if(it.type==='washer'||it.type==='dryer'){put(it.w-1,WD_H,28,it.x+.5,WD_H/2,0,mAppl);continue;}
       if(it.type==='gap'){put(16,15,20,it.x+(it.w-16)/2,7.5,2,mAppl);put(14,14,7,it.x+(it.w-14)/2,22,0,mAppl);continue;}
       if(it.type==='tall'||it.type==='tower'){
@@ -767,6 +791,8 @@ function draw3D(){
       function it_sink(sp){return sp.some(i=>i.type==='sink');}
       function sinkCut(sp){ for(const i of sp) if(i.type==='sink'){
         put(i.w*.6,1.2,bd*.55,i.x+i.w*.2,counterH(r)+.4,bd*.18,mAppl,false);
+        put(1,5,1,i.x+i.w*.47,counterH(r)+2.5,bd*.78,mTrim,false);  /* faucet riser */
+        put(3.2,1,1,i.x+i.w*.44,counterH(r)+5,bd*.72,mTrim,false);  /* faucet spout */
         if(r.type==='bath'&&r.fin.sink===1) put(i.w*.42,4,i.w*.42>bd*.5?bd*.5:i.w*.42,i.x+i.w*.29,counterH(r)+2,bd*.22,mAppl,false); } }
     }
     for(const u of (lay.uppers||[])){
@@ -779,10 +805,10 @@ function draw3D(){
         put(ww-3, .8, .6, wx+1.5, wB+wH/2, -2.3, mSash, false);
         continue;
       }
-      if(u.h<=0||u.type==='fillerU')continue;
+      if(u.h<=0)continue;
       const d=u.type==='overRef'?24:ud;
-      put(u.w-.5,u.h,d,u.x+.25,u.bottom+u.h/2,0,mCab);
-      doorFace(u.w-.5,u.h-3,u.x+.25,u.bottom+u.h/2,d);
+      put(u.w-.5,u.h,d,u.x+.25,u.bottom+u.h/2,0, u.type==='fillerU'?mCabD:mCab);
+      if(u.type!=='fillerU') doorFace(u.w-.5,u.h-3,u.x+.25,u.bottom+u.h/2,d);
     }
   }
   if(r.shape==='single')placeRun(lays.A,'back');
