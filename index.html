@@ -266,16 +266,19 @@ const TYPES = {
   kitchen:{label:'Kitchen', baseH:34.5, baseD:24, toe:4.5, ctT:1.5, splash:18, upD:12, upH:42, uppers:true,
     fixtures:{sink:'Sink (SB36)', dw:'Dishwasher 24"', range:'Range 30"', fridge:'Refrigerator 36"', window:'Window over sink',
       trash:'Trash pullout 18"', spice:'Spice pullout 9"', ice:'Ice maker 15"'},
+    orderable:['range','dw','sink','trash','spice','ice','fridge'],
     sinks:['Undermount — Single','Undermount — Double','Farmhouse Apron']},
   bath:{label:'Bathroom', baseH:31, baseD:21, toe:4, ctT:1, splash:4, upD:0, upH:0, uppers:false,
     fixtures:{vanity:'Vanity sink (VSB36)', vanity2:'Second sink (double vanity)', linen:'Linen tower 18"', toilet:'Toilet space 30"', trash:'Trash pullout 12"'},
+    orderable:['toilet','vanity','vanity2','trash'],
     sinks:['Undermount Oval','Vessel Bowl','Integrated Top','Floating Vanity']},
   laundry:{label:'Laundry', baseH:34.5, baseD:24, toe:4.5, ctT:1.5, splash:18, upD:12, upH:36, uppers:true,
     fixtures:{washer:'Washer 27"', dryer:'Dryer 27"', sink:'Utility sink (SB30)', tall:'Tall storage 18"', trash:'Trash pullout 12"'},
+    orderable:['washer','dryer','sink','trash'],
     sinks:['Drop-in Utility','Undermount — Single']},
   closet:{label:'Closet', baseH:0, baseD:14, toe:0, ctT:0, splash:0, upD:0, upH:0, uppers:false,
     fixtures:{drawers:'Drawer tower', shelves:'Shelf towers', rods:'Hanging rods'},
-    sinks:[]}
+    orderable:[], sinks:[]}
 };
 const DOORS = ['Slab','Shaker','Raised Panel'];
 const CABCOL = [
@@ -363,6 +366,16 @@ function towerFill(width, out, r){
   }
   if(rem > .01) out.push({code:'ROD'+Math.ceil(rem), w:rem, type:'rod', label:'HANG'});
 }
+/* builds the fixed-item list in the user's chosen left-to-right order
+   (cfg.order, an array of fixture keys) — falls back to the room type's
+   canonical order for any checked fixture not yet placed in that order, so
+   newly-checked fixtures just append at the end instead of erroring */
+function buildFixed(cfg, defs, orderable){
+  const order = Array.isArray(cfg.order) ? cfg.order.filter(k=>orderable.includes(k)) : [];
+  const checked = orderable.filter(k=>cfg[k]);
+  const finalOrder = [...order.filter(k=>checked.includes(k)), ...checked.filter(k=>!order.includes(k))];
+  return finalOrder.map(k=>({...defs[k]}));
+}
 function layoutWall(r, id){
   const L = Number(r.walls[id])||0, cfg = r.cfg[id]||{}, cr = corners(r,id);
   const items = [];
@@ -373,27 +386,36 @@ function layoutWall(r, id){
     : {code:'CR', w:24, type:'corner', label:'CNR'});
 
   const fixed = [];
-  let endTall = null, fridgeW = 0;
+  let endTall = null;
 
   if(r.type==='kitchen'){
-    if(cfg.range) fixed.push({code:'RANGE', w:RANGE_W, type:'range', label:'RANGE 30"'});
-    if(cfg.sink){ if(cfg.dw) fixed.push({code:'DW', w:DW_W, type:'dw', label:'D/W'});
-      fixed.push({code:'SB'+SINK_W, w:SINK_W, type:'sink', label:'SB'+SINK_W}); }
-    if(cfg.trash) fixed.push({code:'TRSH18', w:18, type:'trash', label:'TRASH PULL'});
-    if(cfg.spice) fixed.push({code:'SPC9', w:9, type:'spice', label:'SPICE'});
-    if(cfg.ice) fixed.push({code:'ICE15', w:15, type:'ice', label:'ICE MKR'});
-    fridgeW = cfg.fridge ? FR_W : 0;
+    const defs={
+      sink:{code:'SB'+SINK_W, w:SINK_W, type:'sink', label:'SB'+SINK_W},
+      dw:{code:'DW', w:DW_W, type:'dw', label:'D/W'},
+      range:{code:'RANGE', w:RANGE_W, type:'range', label:'RANGE 30"'},
+      fridge:{code:'REF', w:FR_W, type:'fridge', label:'REF 36"'},
+      trash:{code:'TRSH18', w:18, type:'trash', label:'TRASH PULL'},
+      spice:{code:'SPC9', w:9, type:'spice', label:'SPICE'},
+      ice:{code:'ICE15', w:15, type:'ice', label:'ICE MKR'},
+    };
+    fixed.push(...buildFixed(cfg, defs, TYPES.kitchen.orderable));
   } else if(r.type==='bath'){
-    if(cfg.toilet) fixed.push({code:'WC', w:TOILET, type:'gap', label:'W.C.'});
-    if(cfg.vanity) fixed.push({code:'VSB36', w:36, type:'sink', label:'VSB36'});
-    if(cfg.vanity2) fixed.push({code:'VSB36', w:36, type:'sink', label:'VSB36'});
-    if(cfg.trash) fixed.push({code:'TRSH12', w:12, type:'trash', label:'TRASH PULL'});
+    const defs={
+      toilet:{code:'WC', w:TOILET, type:'gap', label:'W.C.'},
+      vanity:{code:'VSB36', w:36, type:'sink', label:'VSB36'},
+      vanity2:{code:'VSB36', w:36, type:'sink', label:'VSB36'},
+      trash:{code:'TRSH12', w:12, type:'trash', label:'TRASH PULL'},
+    };
+    fixed.push(...buildFixed(cfg, defs, TYPES.bath.orderable));
     if(cfg.linen) endTall = {code:'LIN18', w:18, type:'tall', label:'LINEN', tall:TALL_H};
   } else if(r.type==='laundry'){
-    if(cfg.washer) fixed.push({code:'WASH', w:WD_W, type:'washer', label:'WASHER'});
-    if(cfg.dryer) fixed.push({code:'DRY', w:WD_W, type:'dryer', label:'DRYER'});
-    if(cfg.sink) fixed.push({code:'SB30', w:30, type:'sink', label:'SB30'});
-    if(cfg.trash) fixed.push({code:'TRSH12', w:12, type:'trash', label:'TRASH PULL'});
+    const defs={
+      washer:{code:'WASH', w:WD_W, type:'washer', label:'WASHER'},
+      dryer:{code:'DRY', w:WD_W, type:'dryer', label:'DRYER'},
+      sink:{code:'SB30', w:30, type:'sink', label:'SB30'},
+      trash:{code:'TRSH12', w:12, type:'trash', label:'TRASH PULL'},
+    };
+    fixed.push(...buildFixed(cfg, defs, TYPES.laundry.orderable));
     if(cfg.tall) endTall = {code:'T18', w:18, type:'tall', label:'TALL', tall:TALL_H};
   } else { /* closet */
     towerFill(usable, items, r);
@@ -403,7 +425,7 @@ function layoutWall(r, id){
     return {items, uppers, L: Math.max(L, closetSum), overflow: Math.max(0, closetSum-L)};
   }
 
-  const rawFill = usable - fixed.reduce((a,b)=>a+b.w,0) - fridgeW - (endTall?endTall.w:0);
+  const rawFill = usable - fixed.reduce((a,b)=>a+b.w,0) - (endTall?endTall.w:0);
   let fill = Math.max(0, rawFill);
   const overflow = rawFill < 0 ? -rawFill : 0;
   const slots = fixed.length + 1, per = fill/slots;
@@ -416,7 +438,6 @@ function layoutWall(r, id){
     ? {code:'LS36', w:LS, type:'ls', label:'LS36'}
     : {code:'CR', w:24, type:'corner', label:'CNR'});
   if(endTall) items.push(endTall);
-  if(fridgeW) items.push({code:'REF', w:FR_W, type:'fridge', label:'REF 36"'});
 
   finish(items); const uppers = ride(items);
   /* if fixed-size fixtures (toilets, vanities, tall towers, corners) alone don't
@@ -1483,6 +1504,27 @@ function buildRoomBar(){
     rebuildAll();
   });
 }
+/* the current effective left-to-right order for a wall/island's checked
+   orderable fixtures — cfgObj.order if set, else canonical TYPES order,
+   with any newly-checked fixture not yet in a saved order appended last */
+function effectiveOrder(t, cfgObj){
+  const orderable = t.orderable||[];
+  const order = Array.isArray(cfgObj.order) ? cfgObj.order.filter(k=>orderable.includes(k)) : [];
+  const checked = orderable.filter(k=>cfgObj[k]);
+  return [...order.filter(k=>checked.includes(k)), ...checked.filter(k=>!order.includes(k))];
+}
+function orderRowsHtml(t, cfgObj, wallId){
+  const seq = effectiveOrder(t, cfgObj);
+  if(seq.length<2) return '';
+  return `<div class="hint" style="margin:8px 0 4px;font-weight:600;color:var(--ink)">Left-to-right order</div>
+    ${seq.map((k,idx)=>`<div style="display:flex;align-items:center;justify-content:space-between;padding:3px 0;font:500 12px var(--sans)">
+      <span>${idx+1}. ${t.fixtures[k]}</span>
+      <span>
+        <button class="ordBtn" data-wall="${wallId}" data-k="${k}" data-dir="-1" ${idx===0?'disabled':''} style="padding:2px 8px;font-size:11px">↑</button>
+        <button class="ordBtn" data-wall="${wallId}" data-k="${k}" data-dir="1" ${idx===seq.length-1?'disabled':''} style="padding:2px 8px;font-size:11px">↓</button>
+      </span>
+    </div>`).join('')}`;
+}
 function buildSidebar(){
   const r=room(), t=TYPES[r.type], side=$('sidebar');
   const ids=wallIds(r);
@@ -1503,6 +1545,7 @@ function buildSidebar(){
       const ov = layoutWall(r,i).overflow;
       return `<div class="wallcard"><h4>WALL ${i}</h4>
       ${Object.entries(t.fixtures).map(([k,name])=>`<label class="chk"><input type="checkbox" class="wFix" data-wall="${i}" data-k="${k}" ${r.cfg[i]&&r.cfg[i][k]?'checked':''}>${name}</label>`).join('')}
+      ${orderRowsHtml(t, r.cfg[i]||{}, i)}
       ${ov>0.5?`<div class="hint" style="color:var(--dim);font-weight:600">⚠ These fixtures need ~${fmt(Number(r.walls[i])+ov)}" — wall is only ${fmt(r.walls[i])}". Uncheck a fixture, add a linen/tall elsewhere, or lengthen this wall.</div>`:''}
     </div>`;
     }).join('')}
@@ -1530,6 +1573,7 @@ function buildSidebar(){
       ${r.island.pendant?`<div class="fld"><label>Pendant count</label><input type="number" min="1" max="6" id="islPendantN" value="${r.island.pendantCount}"></div>`:''}
       <div class="wallcard" style="margin-top:10px"><h4>ISLAND FIXTURES</h4>
         ${Object.entries(t.fixtures).filter(([k])=>k!=='window').map(([k,name])=>`<label class="chk"><input type="checkbox" class="wFix" data-wall="ISLAND" data-k="${k}" ${r.cfg.ISLAND&&r.cfg.ISLAND[k]?'checked':''}>${name}</label>`).join('')}
+        ${orderRowsHtml(t, r.cfg.ISLAND||{}, 'ISLAND')}
         ${iov>0.5?`<div class="hint" style="color:var(--dim);font-weight:600">⚠ These fixtures need ~${fmt(Number(r.walls.ISLAND)+iov)}" — island is only ${fmt(r.walls.ISLAND)}" long. Uncheck a fixture or lengthen the island.</div>`:''}
       </div>`;
     })():''}
@@ -1553,7 +1597,15 @@ function buildSidebar(){
   const uh=$('rUpH'); if(uh) uh.addEventListener('change',()=>{r.upH=Number(uh.value);render();});
   side.querySelectorAll('.wLen').forEach(el=>el.addEventListener('input',()=>{r.walls[el.dataset.wall]=Number(el.value)||0;render();}));
   side.querySelectorAll('.wFix').forEach(el=>el.addEventListener('change',()=>{
-    r.cfg[el.dataset.wall]=r.cfg[el.dataset.wall]||{}; r.cfg[el.dataset.wall][el.dataset.k]=el.checked; render();}));
+    r.cfg[el.dataset.wall]=r.cfg[el.dataset.wall]||{}; r.cfg[el.dataset.wall][el.dataset.k]=el.checked; buildSidebar(); render();}));
+  side.querySelectorAll('.ordBtn').forEach(b=>b.addEventListener('click',()=>{
+    const cfgObj=r.cfg[b.dataset.wall]||(r.cfg[b.dataset.wall]={});
+    const seq=effectiveOrder(t, cfgObj);
+    const i=seq.indexOf(b.dataset.k), j=i+Number(b.dataset.dir);
+    if(i<0||j<0||j>=seq.length) return;
+    [seq[i],seq[j]]=[seq[j],seq[i]];
+    cfgObj.order=seq; buildSidebar(); render();
+  }));
   $('segDoor').querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{r.fin.door=Number(b.dataset.i);buildSidebar();render();}));
   $('swCab').querySelectorAll('.sw').forEach(s=>s.addEventListener('click',()=>{r.fin.cab=Number(s.dataset.i);buildSidebar();render();}));
   const st=$('swTop'); if(st) st.querySelectorAll('.sw').forEach(s=>s.addEventListener('click',()=>{r.fin.top=Number(s.dataset.i);buildSidebar();render();}));
