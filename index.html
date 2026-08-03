@@ -264,9 +264,9 @@ const FR_W=36, FR_H=70, RANGE_W=30, DW_W=24, SINK_W=36, LS=36, WD_W=27, WD_H=38,
 /* ---- room types ---- */
 const TYPES = {
   kitchen:{label:'Kitchen', baseH:34.5, baseD:24, toe:4.5, ctT:1.5, splash:18, upD:12, upH:42, uppers:true,
-    fixtures:{sink:'Sink (SB36)', dw:'Dishwasher 24"', range:'Range 30"', fridge:'Refrigerator 36"', window:'Window over sink',
+    fixtures:{sink:'Sink (SB36)', dw:'Dishwasher 24"', range:'Range 30"', fridge:'Refrigerator 36"', fridgeXL:'Fridge/Freezer (double) 72"', window:'Window over sink',
       trash:'Trash pullout 18"', spice:'Spice pullout 9"', ice:'Ice maker 15"'},
-    orderable:['range','dw','sink','trash','spice','ice','fridge'],
+    orderable:['range','dw','sink','trash','spice','ice','fridge','fridgeXL'],
     sinks:['Undermount — Single','Undermount — Double','Farmhouse Apron']},
   bath:{label:'Bathroom', baseH:31, baseD:21, toe:4, ctT:1, splash:4, upD:0, upH:0, uppers:false,
     fixtures:{vanity:'Vanity sink (VSB36)', vanity2:'Second sink (double vanity)', linen:'Linen tower 18"', toilet:'Toilet space 30"', trash:'Trash pullout 12"'},
@@ -302,6 +302,9 @@ function ensureRoomDefaults(r){
   if(!r.fin) r.fin={door:1,cab:4,top:0,sink:0};
   if(r.fin.fridgeBuiltIn==null) r.fin.fridgeBuiltIn=false;
   if(!r.island) r.island={enabled:false,depth:24,height:36,bar:false,barChairs:4,pendant:false,pendantCount:3};
+  if(r.bathUppers==null) r.bathUppers=false;
+  if(r.type==='bath' && r.bathUppers && !r.upH) r.upH=30;
+  if(r.type==='bath' && r.bathUppers && !r.upD) r.upD=7;
   if(r.included==null) r.included=true;
   if(r.source===undefined) r.source=null;
   return r;
@@ -319,6 +322,7 @@ function newRoom(type, name){
        the same layoutWall engine as a perimeter wall; this just holds the
        island-specific extras that don't fit that shape */
     island:{enabled:false, depth:24, height:36, bar:false, barChairs:4, pendant:false, pendantCount:3},
+    bathUppers:false,
     included:true, source:null /* source: {page,bbox} when found by the AI takeoff, else null */
   };
   if(type==='kitchen'){ r.cfg.A={sink:true,dw:true,window:true}; r.cfg.B={range:true,fridge:true}; }
@@ -333,6 +337,7 @@ const wallIds = r => (r=r||room(), r.shape==='single'?['A']:r.shape==='U'?['A','
 const counterH = r => (r=r||room(), r.baseH + r.ctT);
 const upperBottom = r => (r=r||room(), counterH(r) + r.splash);
 const upperTop = r => (r=r||room(), upperBottom(r) + Number(r.upH));
+const hasUppers = r => (r=r||room(), TYPES[r.type].uppers || (r.type==='bath' && r.bathUppers));
 /* Wall A's t=0 and Wall B's t=0 land on the exact same physical point (verified
    against both the 2D plan's runH/runV and the 3D placeRun's pos() math) — that's
    the room's actual shared corner. So the wall carrying the lazy-susan treatment
@@ -394,6 +399,7 @@ function layoutWall(r, id){
       dw:{code:'DW', w:DW_W, type:'dw', label:'D/W'},
       range:{code:'RANGE', w:RANGE_W, type:'range', label:'RANGE 30"'},
       fridge:{code:'REF', w:FR_W, type:'fridge', label:'REF 36"'},
+      fridgeXL:{code:'REF72', w:72, type:'fridge', label:'FRIDGE/FRZR 72"'},
       trash:{code:'TRSH18', w:18, type:'trash', label:'TRASH PULL'},
       spice:{code:'SPC9', w:9, type:'spice', label:'SPICE'},
       ice:{code:'ICE15', w:15, type:'ice', label:'ICE MKR'},
@@ -466,7 +472,7 @@ function layoutWall(r, id){
   }
   function ride(list){
     const ups = [];
-    if(!TYPES[r.type].uppers) {
+    if(!hasUppers(r)) {
       /* bath: mirror markers over vanities, for elevation only */
       if(r.type==='bath') for(const it of list) if(it.type==='sink') ups.push({type:'mirror', x:it.x, w:it.w, h:36, bottom:counterH(r)+8, code:''});
       return ups;
@@ -591,7 +597,7 @@ function drawPlan(){
     }
     if(r.type!=='closet'){
       const ce=flip?Y(yTop)-(bd+1.5)*s:Y(yTop)+(bd+1.5)*s; line(c,X(0),ce,X(lay.L),ce,1.5,'#8b7c55');
-      if(TYPES[r.type].uppers){const ue=flip?Y(yTop)-r.upD*s:Y(yTop)+r.upD*s; line(c,X(0),ue,X(lay.L),ue,1.5,'#5d6d80',[8,6]);}
+      if(hasUppers(r)){const ue=flip?Y(yTop)-r.upD*s:Y(yTop)+r.upD*s; line(c,X(0),ue,X(lay.L),ue,1.5,'#5d6d80',[8,6]);}
     }
     dimH(c,X(0),X(lay.L),flip?Y(yTop)+40:Y(yTop)-40,fmt(lay.L)+'"');
   }
@@ -606,7 +612,7 @@ function drawPlan(){
     }
     if(r.type!=='closet'){
       const ce=rt?X(xSide)-(bd+1.5)*s:X(xSide)+(bd+1.5)*s; line(c,ce,Y(0),ce,Y(lay.L),1.5,'#8b7c55');
-      if(TYPES[r.type].uppers){const ue=rt?X(xSide)-r.upD*s:X(xSide)+r.upD*s; line(c,ue,Y(0),ue,Y(lay.L),1.5,'#5d6d80',[8,6]);}
+      if(hasUppers(r)){const ue=rt?X(xSide)-r.upD*s:X(xSide)+r.upD*s; line(c,ue,Y(0),ue,Y(lay.L),1.5,'#5d6d80',[8,6]);}
     }
     dimV(c,Y(0),Y(lay.L),rt?X(xSide)+40:X(xSide)-40,fmt(lay.L)+'"');
   }
@@ -721,7 +727,7 @@ function drawElev(){
   /* dims */
   const dx=X(0)-56;
   if(r.baseH>0){ dimV(c,Yf(r.baseH),Yf(0),dx,fmt(r.baseH)+'"');
-    if(TYPES[r.type].uppers){ dimV(c,Yf(upperBottom(r)),Yf(ctH),dx,fmt(r.splash)+'"'); dimV(c,Yf(upperTop(r)),Yf(upperBottom(r)),dx,fmt(r.upH)+'"'); } }
+    if(hasUppers(r)){ dimV(c,Yf(upperBottom(r)),Yf(ctH),dx,fmt(r.splash)+'"'); dimV(c,Yf(upperTop(r)),Yf(upperBottom(r)),dx,fmt(r.upH)+'"'); } }
   dimV(c,Yf(ceil),Yf(0),X(0)-110,fmt(ceil)+'"');
   dimH(c,X(0),X(L),Yf(0)+76,fmt(L)+'" OVERALL');
   txt(c,(r.name+' — ELEVATION, WALL '+elevWall).toUpperCase(),cv.width/2,44,22);
@@ -839,6 +845,14 @@ function draw3D(){
         if(r.fin.fridgeBuiltIn){
           put(fw,FR_H,bd,fx,FR_H/2,0,mCab); /* panel-ready: flush, cabinet-matched */
           doorFace(fw-3,FR_H-6,fx+1.5,FR_H/2,bd);
+          const panelTop=upperTop(r); /* fill the gap up to the upper-cabinet line with a
+            matching panel, so it reads as one continuous built-in column instead of a
+            standalone box floating short of the surrounding cabinetry */
+          if(panelTop>FR_H){
+            const ph=panelTop-FR_H;
+            put(fw,ph,bd,fx,FR_H+ph/2,0,mCab);
+            doorFace(fw-3,ph-3,fx+1.5,FR_H+ph/2,bd);
+          }
         } else {
           put(fw,FR_H,30,fx,FR_H/2,0,mAppl);
           put(.6,FR_H-6,.6,fx+fw/2-.3,FR_H/2,30,mTrim,false); /* center door seam */
@@ -1536,7 +1550,7 @@ function buildSidebar(){
     </select></div>
     <div class="row2">
       <div class="fld"><label>Ceiling (in)</label><input id="rCeil" type="number" value="${r.ceil}"></div>
-      ${t.uppers?`<div class="fld"><label>Upper ht</label><select id="rUpH">${[30,36,42].map(h=>`<option ${r.upH==h?'selected':''}>${h}</option>`).join('')}</select></div>`:'<div></div>'}
+      ${hasUppers(r)?`<div class="fld"><label>Upper ht</label><select id="rUpH">${[30,36,42].map(h=>`<option ${r.upH==h?'selected':''}>${h}</option>`).join('')}</select></div>`:'<div></div>'}
     </div>
     ${ids.map(i=>`<div class="fld"><label>Wall ${i} length (in)</label><input type="number" step="0.5" data-wall="${i}" class="wLen" value="${r.walls[i]}"></div>`).join('')}
   </div>
@@ -1588,6 +1602,7 @@ function buildSidebar(){
     ${t.sinks.length?`<div class="fld"><label>Sink style</label><select id="rSink">
       ${t.sinks.map((s,i)=>`<option value="${i}" ${r.fin.sink===i?'selected':''}>${s}</option>`).join('')}</select></div>`:''}
     ${r.type==='kitchen'?`<label class="chk"><input type="checkbox" id="rFridgeBI" ${r.fin.fridgeBuiltIn?'checked':''}>Panel-ready (built-in) refrigerator look</label>`:''}
+    ${r.type==='bath'?`<label class="chk"><input type="checkbox" id="rBathUppers" ${r.bathUppers?'checked':''}>Cabinets over vanity (instead of mirror)</label>`:''}
     <p class="hint">Selections show in the 3D view and print on the drawing set for the shop.</p>
   </div>`;
 
@@ -1611,6 +1626,11 @@ function buildSidebar(){
   const st=$('swTop'); if(st) st.querySelectorAll('.sw').forEach(s=>s.addEventListener('click',()=>{r.fin.top=Number(s.dataset.i);buildSidebar();render();}));
   const sk=$('rSink'); if(sk) sk.addEventListener('change',()=>{r.fin.sink=Number(sk.value);render();});
   const rfb=$('rFridgeBI'); if(rfb) rfb.addEventListener('change',()=>{r.fin.fridgeBuiltIn=rfb.checked;render();});
+  const rbu=$('rBathUppers'); if(rbu) rbu.addEventListener('change',()=>{
+    r.bathUppers=rbu.checked;
+    if(r.bathUppers){ if(!r.upH) r.upH=30; if(!r.upD) r.upD=7; }
+    buildSidebar(); render();
+  });
   const ie=$('islEnabled'); if(ie) ie.addEventListener('change',()=>{r.island.enabled=ie.checked;buildSidebar();render();});
   const il=$('islLen'); if(il) il.addEventListener('input',()=>{r.walls.ISLAND=Number(il.value)||0;render();});
   const idp=$('islDepth'); if(idp) idp.addEventListener('input',()=>{r.island.depth=Number(idp.value)||24;render();});
