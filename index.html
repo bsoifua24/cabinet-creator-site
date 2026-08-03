@@ -449,6 +449,45 @@ function lum(hex){const n=parseInt(hex.slice(1),16);return (0.299*(n>>16&255)+0.
 function tint(hex,f){const n=parseInt(hex.slice(1),16);const r=n>>16&255,g=n>>8&255,b=n&255;
   const m=v=>Math.round(v+(255-v)*f); return `rgb(${m(r)},${m(g)},${m(b)})`;}
 
+/* ---- procedural 3D textures (canvas-generated, no image assets/network) ----
+   drawn on a neutral white base so a material's own .color tints them via the
+   standard multiply blend, so one texture can be reused across several tints */
+function woodGrainCanvas(){
+  const cv=document.createElement('canvas'); cv.width=256; cv.height=256;
+  const c=cv.getContext('2d'); c.fillStyle='#ffffff'; c.fillRect(0,0,256,256);
+  for(let i=0;i<70;i++){
+    const y=Math.random()*256, amp=4+Math.random()*10;
+    c.strokeStyle = Math.random()<.5 ? `rgba(0,0,0,${.05+Math.random()*.09})` : `rgba(255,255,255,${.05+Math.random()*.08})`;
+    c.lineWidth=.6+Math.random()*1.6; c.beginPath();
+    for(let x=0;x<=256;x+=8){ const yy=y+Math.sin((x+i*13)/38)*amp; x===0?c.moveTo(x,yy):c.lineTo(x,yy); }
+    c.stroke();
+  }
+  const tex=new THREE.CanvasTexture(cv); tex.wrapS=tex.wrapT=THREE.RepeatWrapping; return tex;
+}
+function stoneTexture(fine){
+  const cv=document.createElement('canvas'); cv.width=256; cv.height=256;
+  const c=cv.getContext('2d'); c.fillStyle='#ffffff'; c.fillRect(0,0,256,256);
+  const n=fine?900:260;
+  for(let i=0;i<n;i++){
+    const x=Math.random()*256, y=Math.random()*256, rad=fine?.4+Math.random()*.9:1+Math.random()*3.2;
+    c.fillStyle = Math.random()<.5 ? `rgba(255,255,255,${.05+Math.random()*.12})` : `rgba(0,0,0,${.04+Math.random()*.1})`;
+    c.beginPath(); c.arc(x,y,rad,0,7); c.fill();
+  }
+  const tex=new THREE.CanvasTexture(cv); tex.wrapS=tex.wrapT=THREE.RepeatWrapping; return tex;
+}
+function plankFloorCanvas(){
+  const cv=document.createElement('canvas'); cv.width=256; cv.height=256;
+  const c=cv.getContext('2d'); c.fillStyle='#ffffff'; c.fillRect(0,0,256,256);
+  c.strokeStyle='rgba(0,0,0,.15)'; c.lineWidth=2;
+  for(let y=0;y<=256;y+=32){ c.beginPath(); c.moveTo(0,y); c.lineTo(256,y); c.stroke(); }
+  for(let i=0;i<90;i++){
+    const y=Math.random()*256, x0=Math.random()*256, len=20+Math.random()*70;
+    c.strokeStyle=`rgba(${Math.random()<.5?'0,0,0':'255,255,255'},${.04+Math.random()*.07})`;
+    c.lineWidth=.6+Math.random(); c.beginPath(); c.moveTo(x0,y); c.lineTo(x0+len,y+(Math.random()-.5)*4); c.stroke();
+  }
+  const tex=new THREE.CanvasTexture(cv); tex.wrapS=tex.wrapT=THREE.RepeatWrapping; return tex;
+}
+
 /* door style detail inside a 2D box */
 function doorDetail(c,x,y,w,h,style,scale){
   const i = 3.5*scale; if(w<5*i||h<5*i) return;
@@ -616,11 +655,15 @@ function draw3D(){
   if(!three){
     const renderer=new THREE.WebGLRenderer({canvas:cv,antialias:true});
     renderer.setSize(cv.width,cv.height,false);
+    renderer.shadowMap.enabled=true; renderer.shadowMap.type=THREE.PCFSoftShadowMap;
     const scene=new THREE.Scene(); scene.background=new THREE.Color(0xeef1f4);
     const cam=new THREE.PerspectiveCamera(45,cv.width/cv.height,1,5000);
-    scene.add(new THREE.AmbientLight(0xffffff,.62));
-    const sun=new THREE.DirectionalLight(0xffffff,.72); sun.position.set(220,420,320); scene.add(sun);
-    three={renderer,scene,cam,group:null,theta:-.7,phi:1.15,r:0,center:new THREE.Vector3()};
+    scene.add(new THREE.HemisphereLight(0xfaf6ee,0xb0a898,.55));
+    const sun=new THREE.DirectionalLight(0xfff6e8,.85); sun.position.set(220,420,320);
+    sun.castShadow=true; sun.shadow.mapSize.set(1024,1024); sun.shadow.camera.near=10; sun.shadow.camera.far=1800;
+    scene.add(sun); scene.add(sun.target);
+    const fill=new THREE.DirectionalLight(0xdce8f5,.35); fill.position.set(-260,180,-200); scene.add(fill);
+    three={renderer,scene,cam,sun,group:null,theta:-.7,phi:1.15,r:0,center:new THREE.Vector3()};
     let drag=false,lx=0,ly=0;
     cv.addEventListener('mousedown',e=>{drag=true;lx=e.clientX;ly=e.clientY;});
     window.addEventListener('mouseup',()=>drag=false);
@@ -633,16 +676,22 @@ function draw3D(){
   const g=new THREE.Group(); three.group=g;
 
   const cabHex=parseInt(CABCOL[r.fin.cab].h.slice(1),16), topHex=parseInt(TOPCOL[r.fin.top].h.slice(1),16);
-  const mCab=new THREE.MeshLambertMaterial({color:cabHex});
-  const mCabD=new THREE.MeshLambertMaterial({color:new THREE.Color(cabHex).multiplyScalar(.7)});
-  const mCabL=new THREE.MeshLambertMaterial({color:new THREE.Color(cabHex).multiplyScalar(1.25)});
-  const mTop=new THREE.MeshLambertMaterial({color:topHex});
-  const mAppl=new THREE.MeshLambertMaterial({color:0xb9c2cb});
-  const mWall=new THREE.MeshLambertMaterial({color:0xf5f2ec});
-  const mFlr=new THREE.MeshLambertMaterial({color:0xd8cdbd});
-  const mMir=new THREE.MeshLambertMaterial({color:0xcfe0ea});
-  const mSash=new THREE.MeshLambertMaterial({color:0xffffff});
-  const mGlass=new THREE.MeshLambertMaterial({color:0xbfd8e6, transparent:true, opacity:.5});
+  const cabTex=woodGrainCanvas(); cabTex.repeat.set(2,1.3);
+  const mCab=new THREE.MeshStandardMaterial({color:cabHex, map:cabTex, roughness:.55});
+  const mCabD=new THREE.MeshStandardMaterial({color:new THREE.Color(cabHex).multiplyScalar(.7), map:cabTex, roughness:.6});
+  const mCabL=new THREE.MeshStandardMaterial({color:new THREE.Color(cabHex).multiplyScalar(1.25), map:cabTex, roughness:.5});
+  const topName=TOPCOL[r.fin.top].n;
+  const topTex = topName==='Butcher Block' ? woodGrainCanvas() : stoneTexture(topName!=='Concrete');
+  topTex.repeat.set(4,1.4);
+  const topRough = topName==='Butcher Block'?.5 : topName==='Concrete'?.65 : .22;
+  const mTop=new THREE.MeshStandardMaterial({color:topHex, map:topTex, roughness:topRough});
+  const mAppl=new THREE.MeshStandardMaterial({color:0xb9c2cb, roughness:.35, metalness:.55});
+  const mWall=new THREE.MeshStandardMaterial({color:0xf5f2ec, roughness:.92});
+  const flrTex=plankFloorCanvas();
+  const mFlr=new THREE.MeshStandardMaterial({color:0xd8cdbd, map:flrTex, roughness:.5});
+  const mMir=new THREE.MeshStandardMaterial({color:0xcfe0ea, roughness:.15, metalness:.2});
+  const mSash=new THREE.MeshStandardMaterial({color:0xffffff, roughness:.55});
+  const mGlass=new THREE.MeshStandardMaterial({color:0xbfd8e6, transparent:true, opacity:.5, roughness:.05});
   const edgeCol=lum(CABCOL[r.fin.cab].h)>.5?0x6b6b66:0x1f1a14;
   const edge=geo=>new THREE.LineSegments(new THREE.EdgesGeometry(geo),new THREE.LineBasicMaterial({color:edgeCol}));
 
@@ -654,7 +703,14 @@ function draw3D(){
   else if(r.shape==='galley'){W=Math.max(lays.A.L,lays.B.L);D=Math.max(100,bd*4.2);}
   else {W=lays.B.L;D=Math.max(lays.A.L,lays.C.L);}
 
-  {const geo=new THREE.BoxGeometry(W,4,D);const m=new THREE.Mesh(geo,mFlr);m.position.set(W/2,-2,D/2);g.add(m);}
+  flrTex.repeat.set(Math.max(1,W/28),Math.max(1,D/28));
+  const half=Math.max(W,D)*.75+40;
+  three.sun.shadow.camera.left=-half; three.sun.shadow.camera.right=half;
+  three.sun.shadow.camera.top=half; three.sun.shadow.camera.bottom=-half;
+  three.sun.target.position.set(W/2,0,D/2);
+  three.sun.shadow.camera.updateProjectionMatrix();
+
+  {const geo=new THREE.BoxGeometry(W,4,D);const m=new THREE.Mesh(geo,mFlr);m.position.set(W/2,-2,D/2);m.receiveShadow=true;g.add(m);}
 
   function placeRun(lay,orient){
     function pos(t,off){ if(orient==='back')return[t,off]; if(orient==='front')return[W-t,D-off];
@@ -663,7 +719,7 @@ function draw3D(){
     function put(w,h,d,t,yC,off,mat,edges=true){
       const [px,pz]=pos(t+w/2,off+d/2);
       const geo=new THREE.BoxGeometry(w,h,d); const m=new THREE.Mesh(geo,mat);
-      m.position.set(px,yC,pz); m.rotation.y=rotY; g.add(m);
+      m.position.set(px,yC,pz); m.rotation.y=rotY; m.castShadow=true; m.receiveShadow=true; g.add(m);
       if(edges){const e=edge(geo);e.position.copy(m.position);e.rotation.copy(m.rotation);g.add(e);}
       return m;
     }
@@ -681,7 +737,7 @@ function draw3D(){
       }
     }
     {const geo=new THREE.BoxGeometry(lay.L,ceil,5);const m=new THREE.Mesh(geo,mWall);
-     const [px,pz]=pos(lay.L/2,-2.5); m.position.set(px,ceil/2,pz); m.rotation.y=rotY; g.add(m);}
+     const [px,pz]=pos(lay.L/2,-2.5); m.position.set(px,ceil/2,pz); m.rotation.y=rotY; m.receiveShadow=true; g.add(m);}
     for(const it of lay.items){
       if(it.type==='fridge'){put(it.w-2,FR_H,30,it.x+1,FR_H/2,0,mAppl);continue;}
       if(it.type==='range'){put(it.w-1,36,26,it.x+.5,18,0,mAppl);continue;}
