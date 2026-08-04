@@ -1123,14 +1123,38 @@ function draw3D(){
       if(r.toe>0 && !floatVanity) put(it.w-6,r.toe,bd-3,it.x+3,r.toe/2,0,mCabD,false);
     }
     if(r.type!=='closet' && !(r.storageWall&&r.storageWall[id])){
+      const cfgId = r.cfg[id]||{};
       for(const seg of counterSegments(lay.items)){
-        put(seg.t1-seg.t0,Math.max(1,r.ctT),bd+1.5,seg.t0,counterH(r)-r.ctT/2,0,mTop);
+        /* an optional lowered counter section right next to the sink — a
+           shallow drop so water stays off the main counter surface while
+           washing dishes — carves a short gap out of the main slab instead
+           of just overlapping it (which would just hide inside the slab
+           and never actually read as "lower") */
+        const sinkItem = cfgId.lowerCounter ? seg.items.find(i=>i.type==='sink') : null;
+        const lz0 = sinkItem ? sinkItem.x+sinkItem.w : 0;
+        const lzw = sinkItem ? Math.max(0, Math.min(14, seg.t1-lz0)) : 0;
+        if(lzw>3){
+          if(lz0>seg.t0) put(lz0-seg.t0,Math.max(1,r.ctT),bd+1.5,seg.t0,counterH(r)-r.ctT/2,0,mTop);
+          put(lzw,Math.max(1,r.ctT),bd+1.5,lz0,counterH(r)-1-r.ctT/2,0,mTop);
+          if(lz0+lzw<seg.t1) put(seg.t1-lz0-lzw,Math.max(1,r.ctT),bd+1.5,lz0+lzw,counterH(r)-r.ctT/2,0,mTop);
+        } else {
+          put(seg.t1-seg.t0,Math.max(1,r.ctT),bd+1.5,seg.t0,counterH(r)-r.ctT/2,0,mTop);
+        }
         for(const i of seg.items) if(i.type==='sink') sinkCut(i);
       }
       function sinkCut(i){
-        put(i.w*.6,1.2,bd*.55,i.x+i.w*.2,counterH(r)+.4,bd*.18,mAppl,false);
-        put(1,5,1,i.x+i.w*.47,counterH(r)+2.5,bd*.06,mTrim,false);  /* faucet riser — at the back, against the wall/backsplash */
-        put(3.2,1,1,i.x+i.w*.44,counterH(r)+5,bd*.13,mTrim,false);  /* faucet spout, arcing slightly forward over the basin */
+        if(r.type==='kitchen' && r.fin.sink===1){ /* double basin — two side-by-side
+          cutouts sharing one center faucet, instead of one wide single basin */
+          const bw=i.w*.34, gap=i.w*.05, cx=i.x+i.w*.5;
+          put(bw,1.2,bd*.55,cx-gap/2-bw,counterH(r)+.4,bd*.18,mAppl,false);
+          put(bw,1.2,bd*.55,cx+gap/2,counterH(r)+.4,bd*.18,mAppl,false);
+          put(1,5,1,cx-.5,counterH(r)+2.5,bd*.06,mTrim,false);
+          put(3.2,1,1,cx-1.6,counterH(r)+5,bd*.13,mTrim,false);
+        } else {
+          put(i.w*.6,1.2,bd*.55,i.x+i.w*.2,counterH(r)+.4,bd*.18,mAppl,false);
+          put(1,5,1,i.x+i.w*.47,counterH(r)+2.5,bd*.06,mTrim,false);  /* faucet riser — at the back, against the wall/backsplash */
+          put(3.2,1,1,i.x+i.w*.44,counterH(r)+5,bd*.13,mTrim,false);  /* faucet spout, arcing slightly forward over the basin */
+        }
         if(r.type==='bath'&&r.fin.sink===1) put(i.w*.42,4,i.w*.42>bd*.5?bd*.5:i.w*.42,i.x+i.w*.29,counterH(r)+2,bd*.22,mAppl,false);
       }
     }
@@ -1899,6 +1923,7 @@ function buildSidebar(){
       ${Object.entries(t.fixtures).map(([k,name])=>`<label class="chk"><input type="checkbox" class="wFix" data-wall="${i}" data-k="${k}" ${r.cfg[i]&&r.cfg[i][k]?'checked':''}>${name}</label>`).join('')}
       ${orderRowsHtml(t, r.cfg[i]||{}, i)}
       ${Object.keys(t.fixtures).some(k=>r.cfg[i]&&r.cfg[i][k]) ? edgeFlushHtml(r.cfg[i]||{}, i) : ''}
+      ${['sink','vanity','vanity2'].some(k=>r.cfg[i]&&r.cfg[i][k]) ? `<label class="chk"><input type="checkbox" class="lowerCounter" data-wall="${i}" ${r.cfg[i]&&r.cfg[i].lowerCounter?'checked':''}>Lowered counter next to sink (keeps water off the main surface)</label>` : ''}
       ${hasUppers(r) ? `<label class="chk"><input type="checkbox" class="upGlass" data-wall="${i}" ${r.cfg[i]&&r.cfg[i].upperGlass?'checked':''}>Glass-front upper cabinets</label>` : ''}`}
       ${ov>0.5?`<div class="hint" style="color:var(--dim);font-weight:600">⚠ These fixtures need ~${fmt(Number(r.walls[i])+ov)}" — wall is only ${fmt(r.walls[i])}". Uncheck a fixture, add a linen/tall elsewhere, or lengthen this wall.</div>`:''}
     </div>`;
@@ -1983,6 +2008,9 @@ function buildSidebar(){
   }));
   side.querySelectorAll('.upGlass').forEach(el=>el.addEventListener('change',()=>{
     r.cfg[el.dataset.wall]=r.cfg[el.dataset.wall]||{}; r.cfg[el.dataset.wall].upperGlass=el.checked; render();
+  }));
+  side.querySelectorAll('.lowerCounter').forEach(el=>el.addEventListener('change',()=>{
+    r.cfg[el.dataset.wall]=r.cfg[el.dataset.wall]||{}; r.cfg[el.dataset.wall].lowerCounter=el.checked; render();
   }));
   side.querySelectorAll('.ordBtn').forEach(b=>b.addEventListener('click',()=>{
     const cfgObj=r.cfg[b.dataset.wall]||(r.cfg[b.dataset.wall]={});
