@@ -437,17 +437,27 @@ function layoutWall(r, id){
     }
     const stgRawFill = usable - stgFixed.reduce((a,b)=>a+b.w,0);
     const stgFill = Math.max(0, stgRawFill), stgOverflow = stgRawFill<0 ? -stgRawFill : 0;
-    const stgSlots = stgFixed.length+1, stgPer = stgFill/stgSlots;
     function fillOne(w){
       const c=[]; greedyFill(w, c, 'B', false);
       if(style==='drawers') c.forEach(x=>{ if(x.type==='base'){ x.type='db'; x.code='D'+x.code; x.label=x.code; } });
       if(style==='open') c.forEach(x=>x.open=true);
       items.push(...c);
     }
-    let sfi=0;
-    fillOne(stgPer);
-    for(const f of stgFixed){ items.push(f); sfi++;
-      fillOne(sfi===stgSlots-1 ? stgFill-stgPer*(stgSlots-1) : stgPer); }
+    if(stgFixed.length===0){
+      fillOne(stgFill);
+    } else {
+      const flushL = cfg.edgeFlush==='left', flushR = cfg.edgeFlush==='right';
+      const stgSlots = Math.max(1, (stgFixed.length-1) + (flushL?0:1) + (flushR?0:1));
+      const stgPer = stgFill/stgSlots;
+      let filled=0;
+      if(!flushL){ filled++; fillOne(filled===stgSlots ? stgFill-stgPer*(stgSlots-1) : stgPer); }
+      let sfi=0;
+      for(const f of stgFixed){
+        items.push(f); sfi++;
+        if(sfi===stgFixed.length && flushR) continue;
+        filled++; fillOne(filled===stgSlots ? stgFill-stgPer*(stgSlots-1) : stgPer);
+      }
+    }
     if(cr.end) items.push({code:'CR', w:24, type:'corner', label:'CNR'});
     finish(items);
     const reveal=1.5, upperBottom2=r.baseH+reveal, upperTop2=Math.max(upperTop(r), Number(r.ceil)-3),
@@ -514,12 +524,28 @@ function layoutWall(r, id){
   const rawFill = usable - fixed.reduce((a,b)=>a+b.w,0) - (endTall?endTall.w:0);
   let fill = Math.max(0, rawFill);
   const overflow = rawFill < 0 ? -rawFill : 0;
-  const slots = fixed.length + 1, per = fill/slots;
   const fillCode = r.type==='bath' ? 'VB' : 'B';
-  let fi = 0;
-  greedyFill(per, items, fillCode, false);
-  for(const f of fixed){ items.push(f); fi++;
-    greedyFill(fi===slots-1 ? fill - per*(slots-1) : per, items, fillCode, f.type==='range'); }
+  /* edgeFlush lets a fixed fixture (a fridge, most often) sit flush against
+     the wall's start/end with no filler cabinet beside it, instead of the
+     fill always being spread evenly on both sides of every fixed item —
+     the leftover fill just shifts entirely onto the other slots. 'left' and
+     'right' are mutually exclusive (a single select), so there's always at
+     least one active slot to absorb the full fill amount. */
+  if(fixed.length===0){
+    greedyFill(fill, items, fillCode, false);
+  } else {
+    const flushL = cfg.edgeFlush==='left', flushR = cfg.edgeFlush==='right';
+    const slots = Math.max(1, (fixed.length-1) + (flushL?0:1) + (flushR?0:1));
+    const per = fill/slots;
+    let filled = 0;
+    if(!flushL){ filled++; greedyFill(filled===slots ? fill-per*(slots-1) : per, items, fillCode, false); }
+    let fi = 0;
+    for(const f of fixed){
+      items.push(f); fi++;
+      if(fi===fixed.length && flushR) continue; /* no trailing filler — fridge sits flush at the end */
+      filled++; greedyFill(filled===slots ? fill-per*(slots-1) : per, items, fillCode, f.type==='range');
+    }
+  }
   if(cr.end) items.push(cr.big && r.type==='kitchen'
     ? {code:'LS36', w:LS, type:'ls', label:'LS36'}
     : {code:'CR', w:24, type:'corner', label:'CNR'});
@@ -557,17 +583,17 @@ function layoutWall(r, id){
       if(r.type==='bath') for(const it of list) if(it.type==='sink') ups.push({type:'mirror', x:it.x, w:it.w, h:36, bottom:counterH(r)+8, code:''});
       return ups;
     }
-    const uH = Number(r.upH), uB = upperBottom(r), uT = upperTop(r);
+    const uH = Number(r.upH), uB = upperBottom(r), uT = upperTop(r), glass = !!r.cfg[id]?.upperGlass;
     for(const it of list){
       let u = null;
-      if(it.type==='corner') u = {code:'WC24', w:24, h:uH, bottom:uB, type:'cornerU'};
-      else if(it.type==='ls') u = {code:'WC24'+r.upH, w:LS, h:uH, bottom:uB, type:'cornerU'};
+      if(it.type==='corner') u = {code:'WC24', w:24, h:uH, bottom:uB, type:'cornerU', glass};
+      else if(it.type==='ls') u = {code:'WC24'+r.upH, w:LS, h:uH, bottom:uB, type:'cornerU', glass};
       else if(it.type==='range'){ const h=Math.max(12,uT-66); u={code:'W'+it.w+Math.round(h), w:it.w, h, bottom:66, type:'overRange'}; }
       else if(it.type==='fridge'){ if(!r.fin.fridgeBuiltIn){ const h=Math.max(12,uT-72); u={code:'W'+it.w+Math.round(h)+'-24D', w:it.w, h, bottom:72, type:'overRef'}; } /* else: the built-in fridge already extends its own matching panel up to uT — a separate overRef cabinet here would overlap it */ }
       else if(it.type==='tall'||it.type==='tower'||it.type==='rod') u = null; /* already floor-to-ceiling — no separate upper to stack on top */
       else if(it.type==='sink' && r.cfg[id]?.window) u = {code:'', w:it.w, h:0, bottom:uB, type:'window'};
       else if(it.type==='filler') u = {code:'F', w:it.w, h:uH, bottom:uB, type:'fillerU'};
-      else u = {code:'W'+Math.round(it.w)+r.upH, w:it.w, h:uH, bottom:uB, type:'upper'};
+      else u = {code:'W'+Math.round(it.w)+r.upH, w:it.w, h:uH, bottom:uB, type:'upper', glass};
       if(u){ u.x = it.x; ups.push(u); }
     }
     return ups;
@@ -1682,6 +1708,18 @@ function orderRowsHtml(t, cfgObj, wallId){
       </span>
     </div>`).join('')}`;
 }
+/* lets a fixed fixture (a fridge, most often) sit flush against the wall's
+   start/end with no filler cabinet beside it, instead of always splitting
+   the leftover fill evenly around every fixed item — combine with the
+   reorder arrows above to choose *which* fixture ends up at that edge */
+function edgeFlushHtml(cfgObj, wallId){
+  const v = cfgObj.edgeFlush || '';
+  return `<div class="fld"><label>Filler position</label><select class="edgeFlush" data-wall="${wallId}">
+    <option value="" ${v===''?'selected':''}>Evenly distributed</option>
+    <option value="left" ${v==='left'?'selected':''}>Flush to left end (first fixture)</option>
+    <option value="right" ${v==='right'?'selected':''}>Flush to right end (last fixture)</option>
+  </select></div>`;
+}
 function buildSidebar(){
   const r=room(), t=TYPES[r.type], side=$('sidebar');
   const ids=wallIds(r);
@@ -1712,10 +1750,13 @@ function buildSidebar(){
       </select></div>
       ${r.type==='kitchen' ? `
       <label class="chk"><input type="checkbox" class="wFix" data-wall="${i}" data-k="fridge" ${r.cfg[i]&&r.cfg[i].fridge?'checked':''}>Refrigerator 36"</label>
-      <label class="chk"><input type="checkbox" class="wFix" data-wall="${i}" data-k="fridgeXL" ${r.cfg[i]&&r.cfg[i].fridgeXL?'checked':''}>Fridge/Freezer (double) 72"</label>` : ''}
+      <label class="chk"><input type="checkbox" class="wFix" data-wall="${i}" data-k="fridgeXL" ${r.cfg[i]&&r.cfg[i].fridgeXL?'checked':''}>Fridge/Freezer (double) 72"</label>
+      ${(r.cfg[i]&&(r.cfg[i].fridge||r.cfg[i].fridgeXL)) ? edgeFlushHtml(r.cfg[i], i) : ''}` : ''}
       <div class="hint">Floor-to-ceiling built-in cabinetry — base cabinets topped with wall cabinets, no functional countertop.${r.type==='kitchen'?' A fridge can still go here, flush with the surrounding doors.':' No other fixtures on a storage wall; switch back to Countertop to add a sink, etc.'}</div>` : `
       ${Object.entries(t.fixtures).map(([k,name])=>`<label class="chk"><input type="checkbox" class="wFix" data-wall="${i}" data-k="${k}" ${r.cfg[i]&&r.cfg[i][k]?'checked':''}>${name}</label>`).join('')}
-      ${orderRowsHtml(t, r.cfg[i]||{}, i)}`}
+      ${orderRowsHtml(t, r.cfg[i]||{}, i)}
+      ${Object.keys(t.fixtures).some(k=>r.cfg[i]&&r.cfg[i][k]) ? edgeFlushHtml(r.cfg[i]||{}, i) : ''}
+      ${hasUppers(r) ? `<label class="chk"><input type="checkbox" class="upGlass" data-wall="${i}" ${r.cfg[i]&&r.cfg[i].upperGlass?'checked':''}>Glass-front upper cabinets</label>` : ''}`}
       ${ov>0.5?`<div class="hint" style="color:var(--dim);font-weight:600">⚠ These fixtures need ~${fmt(Number(r.walls[i])+ov)}" — wall is only ${fmt(r.walls[i])}". Uncheck a fixture, add a linen/tall elsewhere, or lengthen this wall.</div>`:''}
     </div>`;
     }).join('')}
@@ -1777,6 +1818,12 @@ function buildSidebar(){
   }));
   side.querySelectorAll('.stgStyle').forEach(el=>el.addEventListener('change',()=>{
     r.storageStyle=r.storageStyle||{}; r.storageStyle[el.dataset.wall]=el.value; render();
+  }));
+  side.querySelectorAll('.edgeFlush').forEach(el=>el.addEventListener('change',()=>{
+    r.cfg[el.dataset.wall]=r.cfg[el.dataset.wall]||{}; r.cfg[el.dataset.wall].edgeFlush=el.value||undefined; render();
+  }));
+  side.querySelectorAll('.upGlass').forEach(el=>el.addEventListener('change',()=>{
+    r.cfg[el.dataset.wall]=r.cfg[el.dataset.wall]||{}; r.cfg[el.dataset.wall].upperGlass=el.checked; render();
   }));
   side.querySelectorAll('.ordBtn').forEach(b=>b.addEventListener('click',()=>{
     const cfgObj=r.cfg[b.dataset.wall]||(r.cfg[b.dataset.wall]={});
