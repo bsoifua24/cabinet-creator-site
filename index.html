@@ -718,9 +718,10 @@ function drawElev(){
   }
   /* countertop */
   if(r.type!=='closet'){
-    const span=lay.items.filter(i=>!['fridge','tall','gap','washer','dryer','tower','rod'].includes(i.type));
-    if(span.length){ const cx1=X(span[0].x), cx2=X(span[span.length-1].x+span[span.length-1].w);
-      rect(c,cx1-4,Yf(ctH),cx2-cx1+8,Math.max(2,r.ctT*s),2,'#1b2a3a',topF); }
+    for(const seg of counterSegments(lay.items)){
+      const cx1=X(seg.t0), cx2=X(seg.t1);
+      rect(c,cx1-4,Yf(ctH),cx2-cx1+8,Math.max(2,r.ctT*s),2,'#1b2a3a',topF);
+    }
   }
   /* uppers & mirrors */
   for(const u of (lay.uppers||[])){
