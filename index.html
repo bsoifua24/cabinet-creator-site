@@ -1397,7 +1397,7 @@ function scheduleTableHtml(rows){
 function drawSchedule(){
   const r=room(), {rows,baseLF,upperLF,tallN}=buildSchedule(r);
   $('schedTbl').innerHTML=scheduleTableHtml(rows);
-  $('schedTot').textContent=`${r.name}: base ${(baseLF/12).toFixed(1)} LF · uppers ${(upperLF/12).toFixed(1)} LF · tall ×${tallN}  |  ${finLine(r)}`;
+  $('schedTot').textContent=`#${state.active+1} ${r.name}: base ${(baseLF/12).toFixed(1)} LF · uppers ${(upperLF/12).toFixed(1)} LF · tall ×${tallN}  |  ${finLine(r)}`;
 }
 /* on-screen mock sheet for the active room — the plan + every wall's
    elevation (with the chosen finish applied) + the cabinet schedule, all in
@@ -1412,7 +1412,7 @@ function drawSpecSheet(){
   const {rows,baseLF,upperLF,tallN}=buildSchedule(r);
   wrap.innerHTML=`
     <div class="sheetbox" style="padding:16px">
-      <h3 style="font:600 15px var(--mono);letter-spacing:.05em;margin-bottom:2px">${r.name.toUpperCase()} — SPEC SHEET</h3>
+      <h3 style="font:600 15px var(--mono);letter-spacing:.05em;margin-bottom:2px">#${state.active+1} ${r.name.toUpperCase()} — SPEC SHEET</h3>
       <p class="hint" style="margin-bottom:14px">${finLine(r)}</p>
       <p class="hint" style="margin-bottom:6px;font-weight:600;color:var(--ink)">Plan</p>
       <img src="${planImg}" style="width:100%;border:1px solid var(--line);border-radius:2px;margin-bottom:16px">
@@ -1558,8 +1558,8 @@ function ensureEagleDragListeners(){
           setRoomBoundary(nr, result[1]);
           nr.included=r.included;
           state.rooms.splice(eagleSplitLine.ri+1,0,nr);
-          eagleSel=null;
-          drawEagleEye(); render();
+          eagleSel=null; state.active=eagleSplitLine.ri;
+          rebuildAll();
         } else {
           alert("That cut line didn't cross the room cleanly in two places — try dragging fully across it, edge to edge.");
         }
@@ -1591,7 +1591,7 @@ function finishPolyDraw(pnum, pts){
 function bboxToPoly(bbox){ const [x0,y0,x1,y1]=bbox; return [[x0,y0],[x1,y0],[x1,y1],[x0,y1]]; }
 function polyOf(r){ if(!r.source) return null; return (Array.isArray(r.source.poly)&&r.source.poly.length>=3) ? r.source.poly : bboxToPoly(r.source.bbox); }
 function polyBBoxOf(poly){ const xs=poly.map(p=>p[0]), ys=poly.map(p=>p[1]); return [Math.min(...xs),Math.min(...ys),Math.max(...xs),Math.max(...ys)]; }
-function setRoomBoundary(r, poly){ r.source=Object.assign({}, r.source, {poly, bbox:polyBBoxOf(poly)}); }
+function setRoomBoundary(r, poly){ r.source=Object.assign({}, r.source, {poly, bbox:polyBBoxOf(poly), manual:true}); }
 function pointInPoly(pt, poly){
   let inside=false;
   for(let i=0,j=poly.length-1;i<poly.length;j=i++){
@@ -1655,8 +1655,8 @@ let eaglePending=null;          // {pnum,poly} boundary awaiting the New Room mo
 let eagleUndoStack=[], eagleRedoStack=[];
 function eagleSnapshot(){ return JSON.stringify(state.rooms); }
 function eaglePushHistory(){ eagleUndoStack.push(eagleSnapshot()); if(eagleUndoStack.length>40) eagleUndoStack.shift(); eagleRedoStack=[]; }
-function eagleUndo(){ if(!eagleUndoStack.length) return; eagleRedoStack.push(eagleSnapshot()); state.rooms=JSON.parse(eagleUndoStack.pop()).map(ensureRoomDefaults); eagleSel=null; eagleMergeFirst=null; eagleSplitLine=null; drawEagleEye(); render(); }
-function eagleRedoFn(){ if(!eagleRedoStack.length) return; eagleUndoStack.push(eagleSnapshot()); state.rooms=JSON.parse(eagleRedoStack.pop()).map(ensureRoomDefaults); eagleSel=null; eagleMergeFirst=null; eagleSplitLine=null; drawEagleEye(); render(); }
+function eagleUndo(){ if(!eagleUndoStack.length) return; eagleRedoStack.push(eagleSnapshot()); state.rooms=JSON.parse(eagleUndoStack.pop()).map(ensureRoomDefaults); eagleSel=null; eagleMergeFirst=null; eagleSplitLine=null; state.active=Math.min(state.active,state.rooms.length-1); rebuildAll(); }
+function eagleRedoFn(){ if(!eagleRedoStack.length) return; eagleUndoStack.push(eagleSnapshot()); state.rooms=JSON.parse(eagleRedoStack.pop()).map(ensureRoomDefaults); eagleSel=null; eagleMergeFirst=null; eagleSplitLine=null; state.active=Math.min(state.active,state.rooms.length-1); rebuildAll(); }
 function eagleToolHint(){
   return {
     select:'Scroll to zoom, drag to pan.',
@@ -1797,7 +1797,8 @@ function initEagleMapCanvas(cv, pageEntry, pnum){
       const hit=eagleRoomAt(pageEntry,norm);
       if(hit && confirm(`Delete "${hit.r.name}"? This removes the room entirely, not just its boundary — undo brings it right back.`)){
         eaglePushHistory(); state.rooms.splice(hit.i,1); eagleSel=null;
-        drawEagleEye(); render();
+        if(hit.i<state.active) state.active--; else state.active=Math.min(state.active, state.rooms.length-1);
+        rebuildAll();
       }
       return;
     }
@@ -1815,11 +1816,13 @@ function initEagleMapCanvas(cv, pageEntry, pnum){
       if(!eagleMergeFirst){ eagleMergeFirst={pnum,ri:hit.i}; paint(); return; }
       if(eagleMergeFirst.pnum!==pnum || eagleMergeFirst.ri===hit.i){ eagleMergeFirst=null; paint(); return; }
       eaglePushHistory();
-      const rA=state.rooms[eagleMergeFirst.ri], rB=state.rooms[hit.i];
+      const firstRi=eagleMergeFirst.ri;
+      const rA=state.rooms[firstRi], rB=state.rooms[hit.i];
       setRoomBoundary(rA, convexHull(polyOf(rA).concat(polyOf(rB))));
       state.rooms.splice(hit.i,1);
       eagleMergeFirst=null; eagleSel=null;
-      drawEagleEye(); render(); return;
+      state.active = hit.i<firstRi ? firstRi-1 : firstRi;
+      rebuildAll(); return;
     }
   });
   cv.addEventListener('mousemove',e=>{
@@ -1860,9 +1863,13 @@ function drawEagleEye(){
   });
   const pageNums=Object.keys(byPage).map(Number).sort((a,b)=>a-b);
 
-  let html=`<div class="segs" style="max-width:220px;margin-bottom:14px">
-    <button class="eagleModeBtn ${eagleMode==='list'?'on':''}" data-m="list">List</button>
-    <button class="eagleModeBtn ${eagleMode==='map'?'on':''}" data-m="map">Map</button>
+  const aiDetectedCount = state.rooms.filter(r=>r.source && !r.source.manual).length;
+  let html=`<div style="display:flex;align-items:center;gap:14px;margin-bottom:14px;flex-wrap:wrap">
+    <div class="segs" style="max-width:220px">
+      <button class="eagleModeBtn ${eagleMode==='list'?'on':''}" data-m="list">List</button>
+      <button class="eagleModeBtn ${eagleMode==='map'?'on':''}" data-m="map">Map</button>
+    </div>
+    ${aiDetectedCount ? `<button id="eagleClearAI" class="ghost" style="padding:6px 12px;font-size:11px">Clear ${aiDetectedCount} AI-detected room${aiDetectedCount===1?'':'s'} — keep blueprints blank</button>` : ''}
   </div>`;
   if(!pageNums.length && !others.length){
     html+='<div class="sheetbox" style="padding:16px"><p class="hint">No rooms yet — run "Analyze plans" on the Import page, or add a room by hand with the "+ Add room…" menu above.</p></div>';
@@ -1895,6 +1902,15 @@ function drawEagleEye(){
   wrap.innerHTML=html;
 
   wrap.querySelectorAll('.eagleModeBtn').forEach(b=>b.addEventListener('click',()=>{ eagleMode=b.dataset.m; drawEagleEye(); }));
+  const eca=wrap.querySelector('#eagleClearAI'); if(eca) eca.addEventListener('click',()=>{
+    if(!confirm('Remove every AI-detected room and leave the blueprints blank? Rooms you drew or edited by hand are kept. The blueprint images themselves stay loaded — this only clears the guessed boxes, not the plans. Undo can bring them back.')) return;
+    eaglePushHistory();
+    state.rooms = state.rooms.filter(r=>!r.source || r.source.manual);
+    if(!state.rooms.length) state.rooms=[newRoom('kitchen')];
+    state.active=Math.max(0,Math.min(state.active,state.rooms.length-1));
+    eagleSel=null; eagleMergeFirst=null;
+    rebuildAll();
+  });
   wrap.querySelectorAll('.eagleTool').forEach(b=>b.addEventListener('click',()=>{
     eagleTool=b.dataset.t;
     eagleDrawing=null; eagleSplitLine=null; eagleMergeFirst=null; /* switching tools cancels
@@ -2258,7 +2274,7 @@ document.querySelectorAll('.pagenav button').forEach(b=>b.addEventListener('clic
 function buildRoomBar(){
   const bar=$('roomBar');
   bar.innerHTML = state.rooms.map((r,i)=>
-    `<div class="rchip ${i===state.active?'on':''}" data-i="${i}">${r.name}<i data-x="${i}">×</i></div>`).join('') +
+    `<div class="rchip ${i===state.active?'on':''}" data-i="${i}">#${i+1} ${r.name}<i data-x="${i}">×</i></div>`).join('') +
     `<select id="addType"><option value="">+ Add room…</option>
      <option value="kitchen">Kitchen</option><option value="bath">Bathroom</option>
      <option value="laundry">Laundry</option><option value="closet">Closet</option></select>
@@ -2624,11 +2640,14 @@ $('newRoomCreate').addEventListener('click',()=>{
   const type=$('newRoomType').value;
   eaglePushHistory();
   const r=newRoom(TYPES[type]?type:'kitchen', name);
-  r.source={page:eaglePending.pnum, poly:eaglePending.poly, bbox:polyBBoxOf(eaglePending.poly)};
+  r.source={page:eaglePending.pnum, poly:eaglePending.poly, bbox:polyBBoxOf(eaglePending.poly), manual:true};
   state.rooms.push(r);
+  state.active=state.rooms.length-1; /* jump straight to it — it's the room you just
+    drew, you should immediately see it in the sidebar, Schedule, and Spec Sheet,
+    not just as a new box back on the map */
   eaglePending=null;
   $('newRoomModal').classList.remove('on');
-  drawEagleEye(); render();
+  rebuildAll();
 });
 $('newRoomClose').addEventListener('click', closeNewRoomModal);
 $('newRoomModal').addEventListener('click',e=>{ if(e.target.id==='newRoomModal') closeNewRoomModal(); });
