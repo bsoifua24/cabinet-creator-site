@@ -613,6 +613,28 @@ function ctxSetup(cv){ const c=cv.getContext('2d'); c.clearRect(0,0,cv.width,cv.
 function line(c,x1,y1,x2,y2,w=2,col='#1b2a3a',dash=[]){c.save();c.strokeStyle=col;c.lineWidth=w;c.setLineDash(dash);c.beginPath();c.moveTo(x1,y1);c.lineTo(x2,y2);c.stroke();c.restore();}
 function rect(c,x,y,w,h,sw=2,col='#1b2a3a',fill=null){c.save();if(fill){c.fillStyle=fill;c.fillRect(x,y,w,h);}c.strokeStyle=col;c.lineWidth=sw;c.strokeRect(x,y,w,h);c.restore();}
 function txt(c,s,x,y,size=20,col='#1b2a3a',align='center'){c.save();c.fillStyle=col;c.font=`500 ${size}px "IBM Plex Mono"`;c.textAlign=align;c.textBaseline='middle';c.fillText(s,x,y);c.restore();}
+/* shrinks a centered label until it actually fits the cabinet it's labeling
+   instead of spilling into the next one — narrow items (a 9" spice pullout
+   next to an 18" trash pullout) used to render at nearly the same font size
+   and their text ran straight into each other.
+   rot: 0 = horizontal, auto-falls back to a 90° rotation only if it still
+   doesn't fit and the box is taller than wide (runH's narrow items); a
+   nonzero rot always rotates in that direction regardless of that item's
+   own shape, for a run that's sideways to begin with (runV's whole wall). */
+function fitTxt(c,s,cx,cy,w,h,baseSize=15,col='#1b2a3a',rot=0){
+  c.save(); c.fillStyle=col; c.textAlign='center'; c.textBaseline='middle';
+  const mw=fs=>{ c.font=`500 ${fs}px "IBM Plex Mono"`; return c.measureText(s).width; };
+  let fs=baseSize, dir=rot, avail=w;
+  if(dir===0){
+    while(fs>7 && mw(fs)>w-4) fs--;
+    if(mw(fs)>w-4 && h>w*1.15){ dir=-1; fs=baseSize; avail=h; }
+  } else avail=h;
+  if(dir!==0){ while(fs>7 && mw(fs)>avail-4) fs--; }
+  c.font=`500 ${fs}px "IBM Plex Mono"`;
+  if(dir!==0){ c.translate(cx,cy); c.rotate(dir*Math.PI/2); c.fillText(s,0,0); }
+  else c.fillText(s,cx,cy);
+  c.restore();
+}
 function fmt(v){const r=Math.round(v*2)/2;return r%1===0?String(r):r.toFixed(1);}
 function dimH(c,x1,x2,y,label,size=18){ line(c,x1,y,x2,y,1.5,'#c4452c');
   for(const x of [x1,x2]){line(c,x-6,y+6,x+6,y-6,1.5,'#c4452c');line(c,x,y-10,x,y+10,1,'#c4452c');}
@@ -707,7 +729,7 @@ function drawPlan(){
       const x=X(it.x), w=it.w*s, y=flip?Y(yTop)-bd*s:Y(yTop), h=bd*s;
       const fill = ['fridge','range','washer','dryer'].includes(it.type)?'#f3e9e6': it.type==='gap'?'#fff': it.type==='filler'?'#e6ebef': cabF;
       rect(c,x,y,w,h,2,'#1b2a3a', it.type==='gap'?null:fill);
-      if(it.type!=='filler'&&it.type!=='gap') txt(c,it.label,x+w/2,y+h/2,Math.min(16,w/3.6));
+      if(it.type!=='filler'&&it.type!=='gap') fitTxt(c,it.label,x+w/2,y+h/2,w,h,15);
       decorate(it,x,y,w,h,true);
     }
     if(r.type!=='closet'){
@@ -716,7 +738,11 @@ function drawPlan(){
         const ue=flip?Y(yTop)-upD2*s:Y(yTop)+upD2*s; line(c,X(0),ue,X(lay.L),ue,1.5,'#5d6d80',[8,6]); }
     }
     if(stw) txt(c,'STORAGE WALL',X(lay.L/2),flip?Y(yTop)-bd*s-14:Y(yTop)+bd*s+14,13,'#5d6d80');
-    dimH(c,X(0),X(lay.L),flip?Y(yTop)+40:Y(yTop)-40,fmt(lay.L)+'"');
+    /* per-cabinet width, not just the overall wall total */
+    const idimY=flip?Y(yTop)+20:Y(yTop)-20;
+    for(const it of lay.items){ if(it.type==='filler') continue;
+      dimH(c,X(it.x),X(it.x+it.w),idimY,fmt(it.w)+'"',9); }
+    dimH(c,X(0),X(lay.L),flip?Y(yTop)+42:Y(yTop)-42,fmt(lay.L)+'"');
   }
   function runV(lay,xSide,rt,id){
     const stw=!!(r.storageWall&&r.storageWall[id]);
@@ -725,7 +751,7 @@ function drawPlan(){
       const y=Y(it.x), h=it.w*s, x=rt?X(xSide)-bd*s:X(xSide), w=bd*s;
       const fill = ['fridge','range','washer','dryer'].includes(it.type)?'#f3e9e6': it.type==='gap'?'#fff': it.type==='filler'?'#e6ebef': cabF;
       rect(c,x,y,w,h,2,'#1b2a3a', it.type==='gap'?null:fill);
-      if(it.type!=='filler'&&it.type!=='gap'){c.save();c.translate(x+w/2,y+h/2);c.rotate(rt?-Math.PI/2:Math.PI/2);txt(c,it.label,0,0,Math.min(16,h/3.6));c.restore();}
+      if(it.type!=='filler'&&it.type!=='gap') fitTxt(c,it.label,x+w/2,y+h/2,w,h,15,'#1b2a3a',rt?-1:1);
       decorate(it,x,y,w,h,false);
     }
     if(r.type!=='closet'){
@@ -734,7 +760,10 @@ function drawPlan(){
         const ue=rt?X(xSide)-upD2*s:X(xSide)+upD2*s; line(c,ue,Y(0),ue,Y(lay.L),1.5,'#5d6d80',[8,6]); }
     }
     if(stw){c.save();c.translate(rt?X(xSide)-bd*s-14:X(xSide)+bd*s+14,Y(lay.L/2));c.rotate(rt?-Math.PI/2:Math.PI/2);txt(c,'STORAGE WALL',0,0,13,'#5d6d80');c.restore();}
-    dimV(c,Y(0),Y(lay.L),rt?X(xSide)+40:X(xSide)-40,fmt(lay.L)+'"');
+    const idimX=rt?X(xSide)+20:X(xSide)-20;
+    for(const it of lay.items){ if(it.type==='filler') continue;
+      dimV(c,Y(it.x),Y(it.x+it.w),idimX,fmt(it.w)+'"',9); }
+    dimV(c,Y(0),Y(lay.L),rt?X(xSide)+42:X(xSide)-42,fmt(lay.L)+'"');
   }
   if(r.shape==='single') runH(A,0,false,'A');
   else if(r.shape==='L'){runH(A,0,false,'A');runV(B,0,false,'B');}
@@ -750,7 +779,7 @@ function drawPlan(){
       const x=X(it.x), w=it.w*s, y=Y(yTop), h=rd*s;
       const fill = ['fridge','range'].includes(it.type)?'#f3e9e6': it.type==='filler'?'#e6ebef': cabF;
       rect(c,x,y,w,h,2,'#1b2a3a',fill);
-      if(it.type!=='filler') txt(c,it.label,x+w/2,y+h/2,Math.min(16,w/3.6));
+      if(it.type!=='filler') fitTxt(c,it.label,x+w/2,y+h/2,w,h,15);
       decorate(it,x,y,w,h,true);
     }
     const ce=Y(yTop)+(rd+1.5)*s; line(c,X(0),ce,X(lay.L),ce,1.5,'#8b7c55');
@@ -760,8 +789,10 @@ function drawPlan(){
       for(let i=0;i<n;i++){ const cx=X((i+.5)*lay.L/n);
         c.beginPath();c.arc(cx,oy2+16,7,0,7);c.strokeStyle='#5d6d80';c.lineWidth=1.5;c.stroke(); }
     }
-    txt(c,'ISLAND'+(r.island.bar?' · BAR SEATING':''),X(lay.L/2),Y(yTop)-30,15,'#5d6d80');
-    dimH(c,X(0),X(lay.L),Y(yTop)-12,fmt(lay.L)+'"',14);
+    txt(c,'ISLAND'+(r.island.bar?' · BAR SEATING':''),X(lay.L/2),Y(yTop)-44,15,'#5d6d80');
+    dimH(c,X(0),X(lay.L),Y(yTop)-26,fmt(lay.L)+'"',14);
+    for(const it of lay.items){ if(it.type==='filler') continue;
+      dimH(c,X(it.x),X(it.x+it.w),Y(yTop)-9,fmt(it.w)+'"',9); }
   }
 
   txt(c, r.name.toUpperCase()+' — PLAN', X(W/2), Y(0)-82, 20, '#5d6d80');
