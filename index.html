@@ -582,14 +582,23 @@ function layoutWall(r, id){
       const adj = list.filter(i=>['base','filler','rod','tower','db'].includes(i.type)).pop();
       if(adj) adj.w += (L-sum);
     }
-    /* fold any awkwardly narrow leftover filler into the cabinet next to it
-       instead of showing a small standalone sliver */
+    /* fold any leftover filler into the cabinet next to it instead of
+       showing it as its own small standalone box — a filler was never a
+       real cabinet a shop would build on its own, so widen whichever
+       neighboring cabinet is there and grow its code/label to match
+       instead of leaving it showing a stale (too-narrow) width */
     for(let i=list.length-1;i>=0;i--){
       const it=list[i];
-      if(it.type!=='filler' || it.w>=10) continue;
+      if(it.type!=='filler') continue;
       const prev=list[i-1], next=list[i+1];
-      if(prev && (prev.type==='base'||prev.type==='db')){ prev.w+=it.w; list.splice(i,1); }
-      else if(next && (next.type==='base'||next.type==='db')){ next.w+=it.w; list.splice(i,1); }
+      const target = (prev && (prev.type==='base'||prev.type==='db')) ? prev
+                   : (next && (next.type==='base'||next.type==='db')) ? next : null;
+      if(target){
+        target.w += it.w;
+        const nc = target.code.replace(/[\d.]+$/, String(Math.round(target.w)));
+        target.code = nc; target.label = nc;
+        list.splice(i,1);
+      }
     }
     let x=0; for(const it of list){ it.x=x; x+=it.w; }
   }
@@ -791,6 +800,8 @@ function drawPlan(){
       if(it.type!=='filler') fitTxt(c,it.label,x+w/2,y+h/2,w,h,15);
       decorate(it,x,y,w,h,true);
     }
+    dimV(c,Y(yTop),Y(yTop)+rd*s,X(0)-20,fmt(rd)+'"',12); /* island depth — the width dimension
+      above only covers its length along the run, not how deep it is front-to-back */
     const ce=Y(yTop)+(rd+1.5)*s; line(c,X(0),ce,X(lay.L),ce,1.5,'#8b7c55');
     if(r.island.bar){
       const oy2=Y(yTop)+rd*s+14, n=Math.max(1,r.island.barChairs);
@@ -1224,9 +1235,15 @@ function draw3D(){
         put2(rw,36,idp,rx,18,0,mAppl); put2(rw-2,3,1,rx+1,35.5,.5,mTrim,false);
         continue;
       }
-      put2(it.w-.5,ibh,idp,it.x+.25,itoe+ibh/2,0,mCab);
+      /* a spice rack, trash, or ice-maker pullout is a narrow insert — it
+         doesn't need to run the island's full front-to-back depth the way a
+         real base cabinet does, so it stops well short of the far edge
+         instead of looking like it tunnels straight through the island */
+      const shallow = ['spice','trash','ice'].includes(it.type);
+      const cd = shallow ? Math.max(15, idp*.55) : idp;
+      put2(it.w-.5,ibh,cd,it.x+.25,itoe+ibh/2,0,mCab);
       if(it.type!=='filler') doorFace2(it.w-.5,ibh-3,it.x+.25,itoe+ibh/2,0);
-      if(itoe>0) put2(it.w-6,itoe,idp-3,it.x+3,itoe/2,0,mCabD,false);
+      if(itoe>0) put2(it.w-6,itoe,cd-3,it.x+3,itoe/2,0,mCabD,false);
     }
     const overhang=r.island.bar?13:0;
     for(const seg of counterSegments(lay.items)){
