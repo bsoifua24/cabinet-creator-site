@@ -289,6 +289,11 @@ const TOPCOL = [
   {n:'White Quartz', h:'#eceae4'}, {n:'Carrara Marble', h:'#dcdde2'}, {n:'Butcher Block', h:'#c49a5e'},
   {n:'Concrete', h:'#a8a8a3'}, {n:'Black Granite', h:'#33373a'}
 ];
+const HANDLES = ['None','Bar pull','Knob','Cup pull'];
+const HANDLECOL = [
+  {n:'Matte Black', h:'#26262a'}, {n:'Brushed Nickel', h:'#b9c2cb'}, {n:'Brushed Brass', h:'#c9a55c'}, {n:'Chrome', h:'#dde3e8'}
+];
+const HANDLESIZE = ['Small','Standard','Large'];
 
 /* backfills fields added after a room may have been saved (island,
    fridgeBuiltIn, etc.) — every load path (file open, Projects library,
@@ -301,6 +306,9 @@ function ensureRoomDefaults(r){
   if(!r.cfg.ISLAND) r.cfg.ISLAND={};
   if(!r.fin) r.fin={door:1,cab:4,top:0,sink:0};
   if(r.fin.fridgeBuiltIn==null) r.fin.fridgeBuiltIn=false;
+  if(r.fin.handle==null) r.fin.handle=1;
+  if(r.fin.handleColor==null) r.fin.handleColor=0;
+  if(r.fin.handleSize==null) r.fin.handleSize=1;
   if(!r.island) r.island={enabled:false,depth:24,height:36,bar:false,barChairs:4,pendant:false,pendantCount:3};
   if(r.bathUppers==null) r.bathUppers=false;
   if(r.type==='bath' && r.bathUppers && !r.upH) r.upH=30;
@@ -319,7 +327,7 @@ function newRoom(type, name){
     baseH:t.baseH, baseD:t.baseD, toe:t.toe, ctT:t.ctT, splash:t.splash,
     walls:{A: type==='kitchen'?150:96, B:120, C:120, ISLAND:84},
     cfg:{A:{}, B:{}, C:{}, ISLAND:{}},
-    fin:{door:1, cab:4, top:0, sink:0, fridgeBuiltIn:false},
+    fin:{door:1, cab:4, top:0, sink:0, fridgeBuiltIn:false, handle:1, handleColor:0, handleSize:1},
     /* island length/fixtures live in walls.ISLAND / cfg.ISLAND above, reusing
        the same layoutWall engine as a perimeter wall; this just holds the
        island-specific extras that don't fit that shape */
@@ -913,6 +921,9 @@ function draw3D(){
   const mSash=new THREE.MeshStandardMaterial({color:0xffffff, roughness:.55});
   const mGlass=new THREE.MeshStandardMaterial({color:0xbfd8e6, transparent:true, opacity:.5, roughness:.05});
   const mTrim=new THREE.MeshStandardMaterial({color:0x2b2b2d, roughness:.35, metalness:.7});
+  const handleHex=parseInt(HANDLECOL[r.fin.handleColor].h.slice(1),16);
+  const mHandle=new THREE.MeshStandardMaterial({color:handleHex, roughness:.3, metalness:.75});
+  const handleMul=[.7,1,1.35][r.fin.handleSize];
   const edgeCol=lum(CABCOL[r.fin.cab].h)>.5?0x6b6b66:0x1f1a14;
   const edge=geo=>new THREE.LineSegments(new THREE.EdgesGeometry(geo),new THREE.LineBasicMaterial({color:edgeCol}));
 
@@ -961,18 +972,30 @@ function draw3D(){
       if(edges){const e=edge(geo);e.position.copy(m.position);e.rotation.copy(m.rotation);g.add(e);}
       return m;
     }
+    function placeHandle(w,h,t,yC,frontOff){ /* hardware — drawn regardless of door
+      style (even a slab door gets a handle), proud of the door face so it reads
+      as real hardware rather than a shading difference */
+      if(!r.fin.handle || w<5) return;
+      const m = handleMul, hx = t+w-Math.min(4.5,w*.18), hy = yC+h*.24, hOff = frontOff+1.9;
+      if(r.fin.handle===1) put(.55,4.5*m,.55, hx,hy,hOff, mHandle, false); /* bar pull */
+      else if(r.fin.handle===2) put(1.1*m,1.1*m,1.1*m, hx-.55*m,hy,hOff, mHandle, false); /* knob */
+      else put(2.6*m,.55,.55, hx-2.6*m,hy,hOff, mHandle, false); /* cup pull */
+    }
     function doorFace(w,h,t,yC,frontOff){ /* panel-style detail on the door face — edges on so the
       style reads clearly regardless of lighting angle, not just from a subtle shading difference */
-      if(r.fin.door===0) return; /* slab: flat door, nothing to draw */
-      const inset=Math.min(3,w*.14), pw=w-2*inset, ph=h-2*inset;
-      if(pw<3||ph<3) return;
-      if(r.fin.door===2){ /* raised panel: stepped bevel, two nested boxes */
-        put(pw, ph, 1, t+inset, yC, frontOff+.5, mCabL, true);
-        const inset2=inset*.6, pw2=pw-2*inset2, ph2=ph-2*inset2;
-        if(pw2>2 && ph2>2) put(pw2, ph2, .6, t+inset+inset2, yC, frontOff+1.1, mCabL, true);
-      } else { /* shaker: single recessed panel, crisp routed-groove outline */
-        put(pw, ph, .8, t+inset, yC, frontOff-.9, mCabD, true);
+      if(r.fin.door!==0){ /* slab: flat door, no panel detail — still gets a handle below */
+        const inset=Math.min(3,w*.14), pw=w-2*inset, ph=h-2*inset;
+        if(pw>=3 && ph>=3){
+          if(r.fin.door===2){ /* raised panel: stepped bevel, two nested boxes */
+            put(pw, ph, 1, t+inset, yC, frontOff+.5, mCabL, true);
+            const inset2=inset*.6, pw2=pw-2*inset2, ph2=ph-2*inset2;
+            if(pw2>2 && ph2>2) put(pw2, ph2, .6, t+inset+inset2, yC, frontOff+1.1, mCabL, true);
+          } else { /* shaker: single recessed panel, crisp routed-groove outline */
+            put(pw, ph, .8, t+inset, yC, frontOff-.9, mCabD, true);
+          }
+        }
       }
+      placeHandle(w,h,t,yC,frontOff);
     }
     {const geo=new THREE.BoxGeometry(lay.L,ceil,5);const m=new THREE.Mesh(geo,mWall);
      const [px,pz]=pos(lay.L/2,-2.5); m.position.set(px,ceil/2,pz); m.rotation.y=rotY; m.receiveShadow=true; g.add(m);}
@@ -1084,15 +1107,27 @@ function draw3D(){
     /* doors face the walkway side (off≈0, toward the main wall/range) — the
        OPPOSITE convention from a wall run's doorFace, since here the "away
        from the wall" direction is negative off, not positive */
+    function placeHandle2(w,h,t,yC,frontOff){ /* mirrors placeHandle — the island's
+      door-facing side is the OPPOSITE direction (negative off), so the handle
+      stands off the face toward frontOff-1.2, not +1.2 */
+      if(!r.fin.handle || w<5) return;
+      const m = handleMul, hx = t+w-Math.min(4.5,w*.18), hy = yC+h*.24, hOff = frontOff-1.9;
+      if(r.fin.handle===1) put2(.55,4.5*m,.55, hx,hy,hOff, mHandle, false);
+      else if(r.fin.handle===2) put2(1.1*m,1.1*m,1.1*m, hx-.55*m,hy,hOff, mHandle, false);
+      else put2(2.6*m,.55,.55, hx-2.6*m,hy,hOff, mHandle, false);
+    }
     function doorFace2(w,h,t,yC,frontOff){
-      if(r.fin.door===0) return;
-      const inset=Math.min(3,w*.14), pw=w-2*inset, ph=h-2*inset;
-      if(pw<3||ph<3) return;
-      if(r.fin.door===2){
-        put2(pw,ph,1,t+inset,yC,frontOff-.5,mCabL,true);
-        const inset2=inset*.6, pw2=pw-2*inset2, ph2=ph-2*inset2;
-        if(pw2>2&&ph2>2) put2(pw2,ph2,.6,t+inset+inset2,yC,frontOff-1.1,mCabL,true);
-      } else put2(pw,ph,.8,t+inset,yC,frontOff+.9,mCabD,true);
+      if(r.fin.door!==0){
+        const inset=Math.min(3,w*.14), pw=w-2*inset, ph=h-2*inset;
+        if(pw>=3 && ph>=3){
+          if(r.fin.door===2){
+            put2(pw,ph,1,t+inset,yC,frontOff-.5,mCabL,true);
+            const inset2=inset*.6, pw2=pw-2*inset2, ph2=ph-2*inset2;
+            if(pw2>2&&ph2>2) put2(pw2,ph2,.6,t+inset+inset2,yC,frontOff-1.1,mCabL,true);
+          } else put2(pw,ph,.8,t+inset,yC,frontOff+.9,mCabD,true);
+        }
+      }
+      placeHandle2(w,h,t,yC,frontOff);
     }
     const itoe=r.toe, ibh=(ih-r.ctT)-itoe; /* cabinet body stops short of the finished
       counter height by the countertop's own thickness, same as a wall run's baseH —
@@ -1798,6 +1833,13 @@ function buildSidebar(){
       <div class="swrow" id="swTop">${TOPCOL.map((s,i)=>`<div class="sw ${r.fin.top===i?'on':''}" data-i="${i}"><div class="c" style="background:${s.h}"></div><div class="n">${s.n}</div></div>`).join('')}</div></div>`:''}
     ${t.sinks.length?`<div class="fld"><label>Sink style</label><select id="rSink">
       ${t.sinks.map((s,i)=>`<option value="${i}" ${r.fin.sink===i?'selected':''}>${s}</option>`).join('')}</select></div>`:''}
+    <div class="fld"><label>Cabinet hardware</label>
+      <div class="segs" id="segHandle">${HANDLES.map((d,i)=>`<button class="${r.fin.handle===i?'on':''}" data-i="${i}">${d}</button>`).join('')}</div></div>
+    ${r.fin.handle ? `
+    <div class="fld"><label>Hardware finish</label>
+      <div class="swrow" id="swHandle">${HANDLECOL.map((s,i)=>`<div class="sw ${r.fin.handleColor===i?'on':''}" data-i="${i}"><div class="c" style="background:${s.h}"></div><div class="n">${s.n}</div></div>`).join('')}</div></div>
+    <div class="fld"><label>Hardware size</label>
+      <div class="segs" id="segHandleSize">${HANDLESIZE.map((d,i)=>`<button class="${r.fin.handleSize===i?'on':''}" data-i="${i}">${d}</button>`).join('')}</div></div>` : ''}
     ${r.type==='kitchen'?`<label class="chk"><input type="checkbox" id="rFridgeBI" ${r.fin.fridgeBuiltIn?'checked':''}>Panel-ready (built-in) refrigerator look</label>`:''}
     ${r.type==='bath'?`<label class="chk"><input type="checkbox" id="rBathUppers" ${r.bathUppers?'checked':''}>Cabinets over vanity (instead of mirror)</label>`:''}
     <p class="hint">Selections show in the 3D view and print on the drawing set for the shop.</p>
@@ -1837,6 +1879,9 @@ function buildSidebar(){
   $('swCab').querySelectorAll('.sw').forEach(s=>s.addEventListener('click',()=>{r.fin.cab=Number(s.dataset.i);buildSidebar();render();}));
   const st=$('swTop'); if(st) st.querySelectorAll('.sw').forEach(s=>s.addEventListener('click',()=>{r.fin.top=Number(s.dataset.i);buildSidebar();render();}));
   const sk=$('rSink'); if(sk) sk.addEventListener('change',()=>{r.fin.sink=Number(sk.value);render();});
+  $('segHandle').querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{r.fin.handle=Number(b.dataset.i);buildSidebar();render();}));
+  const sh=$('swHandle'); if(sh) sh.querySelectorAll('.sw').forEach(s=>s.addEventListener('click',()=>{r.fin.handleColor=Number(s.dataset.i);buildSidebar();render();}));
+  const shs=$('segHandleSize'); if(shs) shs.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{r.fin.handleSize=Number(b.dataset.i);buildSidebar();render();}));
   const rfb=$('rFridgeBI'); if(rfb) rfb.addEventListener('change',()=>{r.fin.fridgeBuiltIn=rfb.checked;render();});
   const rbu=$('rBathUppers'); if(rbu) rbu.addEventListener('change',()=>{
     r.bathUppers=rbu.checked;
