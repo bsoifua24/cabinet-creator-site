@@ -1335,15 +1335,34 @@ function renderAnnotatedPage(pageEntry, rooms){
       cv.width=img.width; cv.height=img.height;
       const c=ctxSetup(cv);
       c.drawImage(img,0,0);
+      /* draw every box outline first, then place the number badges — rooms
+         that are physically adjacent (or an imprecise AI bbox) often overlap,
+         and a bare number pinned to each box's own top-left corner used to
+         land right on top of its neighbor's, making both unreadable */
+      const boxes=[];
       rooms.forEach(({r,i})=>{
         const [x0,y0,x1,y1]=r.source.bbox;
         const bx=x0*cv.width, by=y0*cv.height, bw=(x1-x0)*cv.width, bh=(y1-y0)*cv.height;
         const col=r.included!==false?'#c4452c':'#9aa4af';
         rect(c,bx,by,bw,bh, r.included!==false?3:1.5, col, r.included!==false?'rgba(196,69,44,.16)':'rgba(154,164,175,.12)');
-        c.save(); c.fillStyle=col; c.font='700 30px "IBM Plex Mono"'; c.textAlign='left'; c.textBaseline='top';
-        c.fillText(String(i+1), bx+6, by+4);
-        c.restore();
+        boxes.push({bx,by,col,i});
       });
+      const rad=Math.max(16,Math.min(22,cv.width/70)), placed=[];
+      for(const b of boxes){
+        let lx=b.bx+rad+5, ly=b.by+rad+5, tries=0;
+        while(placed.some(p=>Math.hypot(p.x-lx,p.y-ly)<rad*2+3) && tries<60){
+          ly += rad*2+4;
+          if(ly > b.by+300){ ly=b.by+rad+5; lx += rad*2+4; } /* wrap into a new column after a tall stack */
+          tries++;
+        }
+        placed.push({x:lx,y:ly});
+        c.save();
+        c.beginPath(); c.arc(lx,ly,rad,0,Math.PI*2); c.fillStyle=b.col; c.fill();
+        c.lineWidth=2.5; c.strokeStyle='#fff'; c.stroke();
+        c.fillStyle='#fff'; c.font=`700 ${Math.round(rad*1.15)}px "IBM Plex Mono"`; c.textAlign='center'; c.textBaseline='middle';
+        c.fillText(String(b.i+1), lx, ly+1);
+        c.restore();
+      }
       resolve(cv);
     };
     img.src=pageEntry.img;
