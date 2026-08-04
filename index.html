@@ -1068,7 +1068,10 @@ function draw3D(){
         if(pw2>2&&ph2>2) put2(pw2,ph2,.6,t+inset+inset2,yC,frontOff-1.1,mCabL,true);
       } else put2(pw,ph,.8,t+inset,yC,frontOff+.9,mCabD,true);
     }
-    const itoe=r.toe, ibh=ih-itoe;
+    const itoe=r.toe, ibh=(ih-r.ctT)-itoe; /* cabinet body stops short of the finished
+      counter height by the countertop's own thickness, same as a wall run's baseH —
+      otherwise the countertop slab overlaps the cabinet tops and the two coincident
+      top surfaces z-fight, showing as seam lines cutting across the counter */
     const sinkItems=[];
     for(const it of lay.items){
       if(it.type==='sink') sinkItems.push(it);
