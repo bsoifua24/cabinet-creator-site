@@ -1470,6 +1470,76 @@ function eagleRow(r,i){
     <button class="eagleEdit" data-i="${i}" style="padding:4px 10px;font-size:11px">Edit →</button>
   </div>`;
 }
+/* ---- Eagle Eye "Map" mode: an interactive, zoom/pannable view of the
+   blueprint with room boxes locked to it. PHASE 1 of the guided-workflow
+   rework — see eagleVP/initEagleMapCanvas below for the coordinate model:
+   every room box is stored ONLY as a normalized [x0,y0,x1,y1] fraction of
+   the source page (r.source.bbox, already produced this way by the AI
+   takeoff), and converted to canvas pixels fresh on every paint() call from
+   the CURRENT pan/zoom transform — nothing is ever baked into a raster, so
+   the boxes can't drift out of registration as you zoom or pan. This is
+   in addition to the existing static "List" mode, not a replacement. */
+let eagleMode='list';
+const eagleVP={}; // per source-page viewport state: {zoom,panX,panY,img,paint}
+let eagleDrag=null, eagleDragInit=false;
+function ensureEagleDragListeners(){
+  if(eagleDragInit) return; eagleDragInit=true;
+  window.addEventListener('mouseup',()=>{ if(eagleDrag){ eagleDrag.cv.style.cursor='grab'; eagleDrag=null; } });
+  window.addEventListener('mousemove',e=>{
+    if(!eagleDrag || !eagleDrag.vp.img) return;
+    const {vp,cv,cvW,cvH}=eagleDrag, b=cv.getBoundingClientRect();
+    vp.panX+=(e.clientX-eagleDrag.lx)*(cvW/b.width);
+    vp.panY+=(e.clientY-eagleDrag.ly)*(cvH/b.height);
+    eagleDrag.lx=e.clientX; eagleDrag.ly=e.clientY;
+    vp.paint();
+  });
+}
+function initEagleMapCanvas(cv, pageEntry, pnum){
+  const vp = eagleVP[pnum] || (eagleVP[pnum]={zoom:1,panX:0,panY:0,img:null});
+  const ctx=cv.getContext('2d'), cvW=cv.width, cvH=cv.height;
+  function paint(){
+    const img=vp.img; if(!img) return;
+    ctx.clearRect(0,0,cvW,cvH);
+    const fitScale=Math.min(cvW/img.width, cvH/img.height), eff=fitScale*vp.zoom;
+    const dw=img.width*eff, dh=img.height*eff;
+    const ox=(cvW-dw)/2+vp.panX, oy=(cvH-dh)/2+vp.panY;
+    ctx.drawImage(img,ox,oy,dw,dh);
+    pageEntry.rooms.forEach(({r,i})=>{
+      const [x0,y0,x1,y1]=r.source.bbox;
+      const bx=ox+x0*dw, by=oy+y0*dh, bw=(x1-x0)*dw, bh=(y1-y0)*dh;
+      const on=r.included!==false, col=on?'#c4452c':'#9aa4af';
+      rect(ctx,bx,by,bw,bh,2.5,col,on?'rgba(196,69,44,.14)':'rgba(154,164,175,.1)');
+      const rad=15, cx2=bx+rad+4, cy2=by+rad+4;
+      ctx.save();
+      ctx.beginPath(); ctx.arc(cx2,cy2,rad,0,Math.PI*2); ctx.fillStyle=col; ctx.fill();
+      ctx.lineWidth=2; ctx.strokeStyle='#fff'; ctx.stroke();
+      ctx.fillStyle='#fff'; ctx.font='700 15px "IBM Plex Mono"'; ctx.textAlign='center'; ctx.textBaseline='middle';
+      ctx.fillText(String(i+1),cx2,cy2+1);
+      ctx.restore();
+    });
+  }
+  vp.paint=paint;
+  if(vp.img) paint();
+  else { const img=new Image(); img.onload=()=>{ vp.img=img; paint(); }; img.src=pageEntry.img; }
+
+  cv.style.cursor='grab';
+  cv.addEventListener('wheel',e=>{
+    e.preventDefault(); if(!vp.img) return;
+    const b=cv.getBoundingClientRect();
+    const mx=(e.clientX-b.left)*(cvW/b.width), my=(e.clientY-b.top)*(cvH/b.height);
+    const fitScale=Math.min(cvW/vp.img.width, cvH/vp.img.height), oldEff=fitScale*vp.zoom;
+    const oldOx=(cvW-vp.img.width*oldEff)/2+vp.panX, oldOy=(cvH-vp.img.height*oldEff)/2+vp.panY;
+    const ix=(mx-oldOx)/oldEff, iy=(my-oldOy)/oldEff; /* image-space point under the cursor —
+      held fixed across the zoom change so the zoom feels anchored to the cursor, not the corner */
+    vp.zoom=Math.max(1,Math.min(8,vp.zoom*(1-e.deltaY*.0015)));
+    const newEff=fitScale*vp.zoom;
+    vp.panX=mx-ix*newEff-(cvW-vp.img.width*newEff)/2;
+    vp.panY=my-iy*newEff-(cvH-vp.img.height*newEff)/2;
+    paint();
+  },{passive:false});
+  cv.addEventListener('mousedown',e=>{ eagleDrag={vp,cv,cvW,cvH,lx:e.clientX,ly:e.clientY}; cv.style.cursor='grabbing'; });
+  ensureEagleDragListeners();
+}
 function drawEagleEye(){
   const wrap=$('eagleWrap'); if(!wrap) return;
   const byPage={};
@@ -1481,25 +1551,47 @@ function drawEagleEye(){
   });
   const pageNums=Object.keys(byPage).map(Number).sort((a,b)=>a-b);
 
-  let html='';
+  let html=`<div class="segs" style="max-width:220px;margin-bottom:14px">
+    <button class="eagleModeBtn ${eagleMode==='list'?'on':''}" data-m="list">List</button>
+    <button class="eagleModeBtn ${eagleMode==='map'?'on':''}" data-m="map">Map</button>
+  </div>`;
   if(!pageNums.length && !others.length){
-    html='<div class="sheetbox" style="padding:16px"><p class="hint">No rooms yet — run "Analyze plans" on the Import page, or add a room by hand with the "+ Add room…" menu above.</p></div>';
+    html+='<div class="sheetbox" style="padding:16px"><p class="hint">No rooms yet — run "Analyze plans" on the Import page, or add a room by hand with the "+ Add room…" menu above.</p></div>';
   }
-  for(const pnum of pageNums){
-    html+=`<div class="sheetbox" style="margin-bottom:12px"><span class="stamp">Page ${pnum}</span><canvas class="draw" data-page="${pnum}" width="1600" height="1200"></canvas></div>`;
-    html+=`<div class="wallcard" style="margin-bottom:16px">${byPage[pnum].rooms.map(({r,i})=>eagleRow(r,i)).join('')}</div>`;
-  }
-  if(others.length){
-    html+=`<div class="wallcard"><h4>OTHER ROOMS — no blueprint reference</h4>${others.map(({r,i})=>eagleRow(r,i)).join('')}</div>`;
+  if(eagleMode==='map'){
+    html+='<p class="hint" style="margin-bottom:10px">Scroll to zoom, drag to pan — room boxes stay locked to the plan.</p>';
+    for(const pnum of pageNums){
+      html+=`<div class="sheetbox" style="margin-bottom:16px"><span class="stamp">Page ${pnum}</span><canvas class="draw" data-mappage="${pnum}" width="1600" height="1200"></canvas></div>`;
+    }
+    if(others.length){
+      html+=`<div class="wallcard"><h4>OTHER ROOMS — no blueprint reference</h4>${others.map(({r,i})=>eagleRow(r,i)).join('')}</div>`;
+    }
+  } else {
+    for(const pnum of pageNums){
+      html+=`<div class="sheetbox" style="margin-bottom:12px"><span class="stamp">Page ${pnum}</span><canvas class="draw" data-page="${pnum}" width="1600" height="1200"></canvas></div>`;
+      html+=`<div class="wallcard" style="margin-bottom:16px">${byPage[pnum].rooms.map(({r,i})=>eagleRow(r,i)).join('')}</div>`;
+    }
+    if(others.length){
+      html+=`<div class="wallcard"><h4>OTHER ROOMS — no blueprint reference</h4>${others.map(({r,i})=>eagleRow(r,i)).join('')}</div>`;
+    }
   }
   wrap.innerHTML=html;
 
-  for(const pnum of pageNums){
-    const cv=wrap.querySelector(`canvas[data-page="${pnum}"]`);
-    renderAnnotatedPage(byPage[pnum], byPage[pnum].rooms).then(annotated=>{
-      cv.width=annotated.width; cv.height=annotated.height;
-      cv.getContext('2d').drawImage(annotated,0,0);
-    });
+  wrap.querySelectorAll('.eagleModeBtn').forEach(b=>b.addEventListener('click',()=>{ eagleMode=b.dataset.m; drawEagleEye(); }));
+
+  if(eagleMode==='map'){
+    for(const pnum of pageNums){
+      const cv=wrap.querySelector(`canvas[data-mappage="${pnum}"]`);
+      initEagleMapCanvas(cv, byPage[pnum], pnum);
+    }
+  } else {
+    for(const pnum of pageNums){
+      const cv=wrap.querySelector(`canvas[data-page="${pnum}"]`);
+      renderAnnotatedPage(byPage[pnum], byPage[pnum].rooms).then(annotated=>{
+        cv.width=annotated.width; cv.height=annotated.height;
+        cv.getContext('2d').drawImage(annotated,0,0);
+      });
+    }
   }
 
   wrap.querySelectorAll('.eagleChk').forEach(el=>el.addEventListener('change',()=>{
