@@ -172,6 +172,22 @@
   </div>
 </div>
 
+<div class="modal-overlay" id="newRoomModal">
+  <div class="modal" style="width:min(420px,92vw)">
+    <div class="modal-head"><h3>New Room</h3><button id="newRoomClose">&times;</button></div>
+    <div class="modal-body">
+      <div class="fld"><label>Room name</label><input id="newRoomName" placeholder="e.g. Kitchen"></div>
+      <div class="fld"><label>Room type</label><select id="newRoomType">
+        <option value="kitchen">Kitchen</option>
+        <option value="bath">Bathroom</option>
+        <option value="laundry">Laundry</option>
+        <option value="closet">Closet / Pantry / Other storage</option>
+      </select></div>
+      <button class="primary" id="newRoomCreate" style="width:100%;margin-top:8px">Create room</button>
+    </div>
+  </div>
+</div>
+
 <div class="pagenav">
   <button class="on" data-p="pImport">1 · Import plans</button>
   <button data-p="pDesign">2 · Designer</button>
@@ -1483,16 +1499,195 @@ let eagleMode='list';
 const eagleVP={}; // per source-page viewport state: {zoom,panX,panY,img,paint}
 let eagleDrag=null, eagleDragInit=false;
 function ensureEagleDragListeners(){
+  /* one shared window-level drag handler for every tool, keyed off
+     eagleDrag.type — set up exactly once (canvases get destroyed/recreated
+     on every drawEagleEye() call, so per-canvas window listeners would pile
+     up and leak; eagleDrag/eagleVP hold the persistent state instead) */
   if(eagleDragInit) return; eagleDragInit=true;
-  window.addEventListener('mouseup',()=>{ if(eagleDrag){ eagleDrag.cv.style.cursor='grab'; eagleDrag=null; } });
   window.addEventListener('mousemove',e=>{
     if(!eagleDrag || !eagleDrag.vp.img) return;
-    const {vp,cv,cvW,cvH}=eagleDrag, b=cv.getBoundingClientRect();
-    vp.panX+=(e.clientX-eagleDrag.lx)*(cvW/b.width);
-    vp.panY+=(e.clientY-eagleDrag.ly)*(cvH/b.height);
-    eagleDrag.lx=e.clientX; eagleDrag.ly=e.clientY;
-    vp.paint();
+    const {vp,cv,type}=eagleDrag;
+    if(type==='pan'){
+      const b=cv.getBoundingClientRect();
+      vp.panX+=(e.clientX-eagleDrag.lx)*(cv.width/b.width);
+      vp.panY+=(e.clientY-eagleDrag.ly)*(cv.height/b.height);
+      eagleDrag.lx=e.clientX; eagleDrag.ly=e.clientY;
+      vp.paint();
+    } else if(type==='rectdraw'){
+      const [norm]=eagleEvtNorm(cv,vp,e);
+      if(eagleDrawing){ eagleDrawing.cur=norm; vp.paint(); }
+    } else if(type==='vertex'){
+      const [norm]=eagleEvtNorm(cv,vp,e);
+      const r=state.rooms[eagleDrag.ri], poly=polyOf(r).map(p=>p.slice());
+      poly[eagleDrag.vi]=norm; setRoomBoundary(r,poly); vp.paint();
+    } else if(type==='move'){
+      const [norm]=eagleEvtNorm(cv,vp,e);
+      const r=state.rooms[eagleDrag.ri], poly=polyOf(r);
+      const dx=norm[0]-eagleDrag.lastNorm[0], dy=norm[1]-eagleDrag.lastNorm[1];
+      setRoomBoundary(r, poly.map(p=>[p[0]+dx,p[1]+dy]));
+      eagleDrag.lastNorm=norm; vp.paint();
+    } else if(type==='split'){
+      const [norm]=eagleEvtNorm(cv,vp,e);
+      if(eagleSplitLine){ eagleSplitLine.b=norm; vp.paint(); }
+    }
   });
+  window.addEventListener('mouseup',()=>{
+    if(!eagleDrag) return;
+    const type=eagleDrag.type;
+    if(type==='pan') eagleDrag.cv.style.cursor='grab';
+    if(type==='rectdraw'){
+      if(eagleDrawing && eagleDrawing.type==='rect' && eagleDrawing.start && eagleDrawing.cur){
+        const [x0,y0]=eagleDrawing.start, [x1,y1]=eagleDrawing.cur;
+        if(Math.abs(x1-x0)>.004 && Math.abs(y1-y0)>.004){
+          const poly=[[Math.min(x0,x1),Math.min(y0,y1)],[Math.max(x0,x1),Math.min(y0,y1)],
+                       [Math.max(x0,x1),Math.max(y0,y1)],[Math.min(x0,x1),Math.max(y0,y1)]];
+          eaglePending={pnum:eagleDrawing.pnum, poly};
+          openNewRoomModal();
+        }
+      }
+      eagleDrawing=null;
+    }
+    if(type==='split'){
+      if(eagleSplitLine && eagleSplitLine.a && eagleSplitLine.b){
+        const r=state.rooms[eagleSplitLine.ri], poly=polyOf(r);
+        const result=splitPolygon(poly, eagleSplitLine.a, eagleSplitLine.b);
+        if(result){
+          eaglePushHistory();
+          setRoomBoundary(r, result[0]);
+          const nr=newRoom(r.type, r.name+' (2)');
+          setRoomBoundary(nr, result[1]);
+          nr.included=r.included;
+          state.rooms.splice(eagleSplitLine.ri+1,0,nr);
+          eagleSel=null;
+          drawEagleEye(); render();
+        } else {
+          alert("That cut line didn't cross the room cleanly in two places — try dragging fully across it, edge to edge.");
+        }
+      }
+      eagleSplitLine=null;
+    }
+    eagleDrag=null;
+  });
+}
+function openNewRoomModal(){
+  const nm=$('newRoomName'); if(nm) nm.value='';
+  const ty=$('newRoomType'); if(ty) ty.value='kitchen';
+  $('newRoomModal').classList.add('on');
+  if(nm) nm.focus();
+}
+function closeNewRoomModal(){ $('newRoomModal').classList.remove('on'); eaglePending=null; }
+function finishPolyDraw(pnum, pts){
+  eagleDrawing=null;
+  eaglePending={pnum, poly:pts.map(p=>p.slice())};
+  openNewRoomModal();
+}
+/* ---- PHASE 2: manual boundary editing tools, all working on the same
+   normalized-polygon coordinate model Phase 1 established. A room's
+   boundary lives at r.source.poly (array of [x,y] points, 0-1 normalized)
+   when it's been hand-drawn/edited; AI-detected rooms only have
+   r.source.bbox until touched, so polyOf() falls back to treating that
+   bbox as an implicit 4-point rectangle — every tool below reads/writes
+   through polyOf()/bboxToPoly() so both cases work uniformly. */
+function bboxToPoly(bbox){ const [x0,y0,x1,y1]=bbox; return [[x0,y0],[x1,y0],[x1,y1],[x0,y1]]; }
+function polyOf(r){ if(!r.source) return null; return (Array.isArray(r.source.poly)&&r.source.poly.length>=3) ? r.source.poly : bboxToPoly(r.source.bbox); }
+function polyBBoxOf(poly){ const xs=poly.map(p=>p[0]), ys=poly.map(p=>p[1]); return [Math.min(...xs),Math.min(...ys),Math.max(...xs),Math.max(...ys)]; }
+function setRoomBoundary(r, poly){ r.source=Object.assign({}, r.source, {poly, bbox:polyBBoxOf(poly)}); }
+function pointInPoly(pt, poly){
+  let inside=false;
+  for(let i=0,j=poly.length-1;i<poly.length;j=i++){
+    const [xi,yi]=poly[i], [xj,yj]=poly[j];
+    if(((yi>pt[1])!==(yj>pt[1])) && (pt[0] < (xj-xi)*(pt[1]-yi)/(yj-yi)+xi)) inside=!inside;
+  }
+  return inside;
+}
+function distToSeg(pt,a,b){
+  const dx=b[0]-a[0], dy=b[1]-a[1], len2=dx*dx+dy*dy;
+  let t = len2>0 ? ((pt[0]-a[0])*dx+(pt[1]-a[1])*dy)/len2 : 0;
+  t=Math.max(0,Math.min(1,t));
+  return Math.hypot(pt[0]-(a[0]+t*dx), pt[1]-(a[1]+t*dy));
+}
+function segSegIntersect(a1,a2,b1,b2){
+  const d1x=a2[0]-a1[0], d1y=a2[1]-a1[1], d2x=b2[0]-b1[0], d2y=b2[1]-b1[1];
+  const denom=d1x*d2y-d1y*d2x;
+  if(Math.abs(denom)<1e-12) return null;
+  const t=((b1[0]-a1[0])*d2y-(b1[1]-a1[1])*d2x)/denom;
+  const u=((b1[0]-a1[0])*d1y-(b1[1]-a1[1])*d1x)/denom;
+  if(t<0||t>1||u<0||u>1) return null;
+  return {pt:[a1[0]+t*d1x,a1[1]+t*d1y], u};
+}
+/* splits `poly` along the (extended) line through cutA/cutB into two
+   sub-polygons by walking the vertex list between the two edges it
+   crosses — returns null if the cut doesn't cleanly cross exactly two
+   distinct edges (e.g. it missed the shape, or grazed a single edge) */
+function splitPolygon(poly, cutA, cutB){
+  const dx=cutB[0]-cutA[0], dy=cutB[1]-cutA[1], f=5;
+  const eA=[cutA[0]-dx*f,cutA[1]-dy*f], eB=[cutB[0]+dx*f,cutB[1]+dy*f];
+  const hits=[];
+  for(let i=0;i<poly.length;i++){
+    const hit=segSegIntersect(eA,eB,poly[i],poly[(i+1)%poly.length]);
+    if(hit) hits.push({edgeIdx:i, pt:hit.pt});
+  }
+  if(hits.length<2) return null;
+  hits.sort((a,b)=>a.edgeIdx-b.edgeIdx);
+  const h1=hits[0], h2=hits[hits.length-1];
+  if(h1.edgeIdx===h2.edgeIdx) return null;
+  const polyA=[h1.pt]; for(let i=h1.edgeIdx+1;;i=(i+1)%poly.length){ polyA.push(poly[i]); if(i===h2.edgeIdx) break; } polyA.push(h2.pt);
+  const polyB=[h2.pt]; for(let i=h2.edgeIdx+1;;i=(i+1)%poly.length){ polyB.push(poly[i]); if(i===h1.edgeIdx) break; } polyB.push(h1.pt);
+  return (polyA.length>=3 && polyB.length>=3) ? [polyA,polyB] : null;
+}
+function convexHull(points){ /* monotone chain — used to approximate a
+  "merge" as the hull enclosing both shapes, since a true polygon union is
+  a lot more machinery for what's realistically "join two nearby boxes" */
+  const pts=points.slice().sort((a,b)=>a[0]-b[0]||a[1]-b[1]);
+  const cross=(o,a,b)=>(a[0]-o[0])*(b[1]-o[1])-(a[1]-o[1])*(b[0]-o[0]);
+  const lower=[]; for(const p of pts){ while(lower.length>=2 && cross(lower[lower.length-2],lower[lower.length-1],p)<=0) lower.pop(); lower.push(p); }
+  const upper=[]; for(let i=pts.length-1;i>=0;i--){ const p=pts[i]; while(upper.length>=2 && cross(upper[upper.length-2],upper[upper.length-1],p)<=0) upper.pop(); upper.push(p); }
+  lower.pop(); upper.pop();
+  return lower.concat(upper);
+}
+
+let eagleTool='select';         // select|rect|poly|edit|delete|split|merge
+let eagleDrawing=null;          // in-progress rect/poly draw: {pnum,type,start,cur,pts}
+let eagleSel=null;              // {pnum,ri} — room currently selected for edit/split/merge
+let eagleSplitLine=null;        // {a,b} cut line while dragging in split mode — eagleDrag just flags it's active
+let eagleMergeFirst=null;       // {pnum,ri} first pick while tool==='merge'
+let eaglePending=null;          // {pnum,poly} boundary awaiting the New Room modal
+let eagleUndoStack=[], eagleRedoStack=[];
+function eagleSnapshot(){ return JSON.stringify(state.rooms); }
+function eaglePushHistory(){ eagleUndoStack.push(eagleSnapshot()); if(eagleUndoStack.length>40) eagleUndoStack.shift(); eagleRedoStack=[]; }
+function eagleUndo(){ if(!eagleUndoStack.length) return; eagleRedoStack.push(eagleSnapshot()); state.rooms=JSON.parse(eagleUndoStack.pop()).map(ensureRoomDefaults); eagleSel=null; eagleMergeFirst=null; eagleSplitLine=null; drawEagleEye(); render(); }
+function eagleRedoFn(){ if(!eagleRedoStack.length) return; eagleUndoStack.push(eagleSnapshot()); state.rooms=JSON.parse(eagleRedoStack.pop()).map(ensureRoomDefaults); eagleSel=null; eagleMergeFirst=null; eagleSplitLine=null; drawEagleEye(); render(); }
+function eagleToolHint(){
+  return {
+    select:'Scroll to zoom, drag to pan.',
+    rect:'Click and drag to draw a rectangular room boundary.',
+    poly:'Click to place each corner; double-click, or click the first point again, to close the shape.',
+    edit:'Click a room to select it, drag a corner to reshape it, or drag inside it to move the whole boundary.',
+    delete:'Click a room boundary to delete that room.',
+    split:'Click a room to select it, then drag a line across it to split it into two rooms.',
+    merge:'Click one room, then click a second room to combine them into one.'
+  }[eagleTool] || '';
+}
+/* converts a mouse event to canvas-internal pixel coords, then to
+   normalized [0,1] image-space coords, using the SAME transform paint()
+   draws with — this is the one place both directions have to agree, or
+   clicks land on the wrong spot the instant you're zoomed/panned */
+function eagleXform(cv, vp){
+  const fitScale=Math.min(cv.width/vp.img.width, cv.height/vp.img.height), eff=fitScale*vp.zoom;
+  const dw=vp.img.width*eff, dh=vp.img.height*eff;
+  const ox=(cv.width-dw)/2+vp.panX, oy=(cv.height-dh)/2+vp.panY;
+  return {ox,oy,dw,dh,eff};
+}
+function eagleEvtNorm(cv, vp, e){
+  const b=cv.getBoundingClientRect();
+  const mx=(e.clientX-b.left)*(cv.width/b.width), my=(e.clientY-b.top)*(cv.height/b.height);
+  const {ox,oy,dw,dh}=eagleXform(cv,vp);
+  return [[(mx-ox)/dw, (my-oy)/dh], [mx,my]]; // [normPt, canvasPxPt]
+}
+function eagleRoomAt(pageEntry, pt){ // topmost (last-drawn) room containing pt, normalized coords
+  for(let k=pageEntry.rooms.length-1;k>=0;k--){ const {r,i}=pageEntry.rooms[k];
+    const poly=polyOf(r); if(poly && pointInPoly(pt,poly)) return {r,i}; }
+  return null;
 }
 function initEagleMapCanvas(cv, pageEntry, pnum){
   const vp = eagleVP[pnum] || (eagleVP[pnum]={zoom:1,panX:0,panY:0,img:null});
@@ -1500,29 +1695,60 @@ function initEagleMapCanvas(cv, pageEntry, pnum){
   function paint(){
     const img=vp.img; if(!img) return;
     ctx.clearRect(0,0,cvW,cvH);
-    const fitScale=Math.min(cvW/img.width, cvH/img.height), eff=fitScale*vp.zoom;
-    const dw=img.width*eff, dh=img.height*eff;
-    const ox=(cvW-dw)/2+vp.panX, oy=(cvH-dh)/2+vp.panY;
+    const {ox,oy,dw,dh}=eagleXform(cv,vp);
     ctx.drawImage(img,ox,oy,dw,dh);
+    const toPx=p=>[ox+p[0]*dw, oy+p[1]*dh];
     pageEntry.rooms.forEach(({r,i})=>{
-      const [x0,y0,x1,y1]=r.source.bbox;
-      const bx=ox+x0*dw, by=oy+y0*dh, bw=(x1-x0)*dw, bh=(y1-y0)*dh;
-      const on=r.included!==false, col=on?'#c4452c':'#9aa4af';
-      rect(ctx,bx,by,bw,bh,2.5,col,on?'rgba(196,69,44,.14)':'rgba(154,164,175,.1)');
-      const rad=15, cx2=bx+rad+4, cy2=by+rad+4;
+      const poly=polyOf(r); if(!poly) return;
+      const on=r.included!==false;
+      const isSel=eagleSel&&eagleSel.pnum===pnum&&eagleSel.ri===i;
+      const isMergeFirst=eagleMergeFirst&&eagleMergeFirst.pnum===pnum&&eagleMergeFirst.ri===i;
+      const col=isSel?'#2f6fd1':isMergeFirst?'#1f9d63':(on?'#c4452c':'#9aa4af');
+      const pxPts=poly.map(toPx);
+      ctx.save();
+      ctx.beginPath(); pxPts.forEach((p,k)=>k===0?ctx.moveTo(p[0],p[1]):ctx.lineTo(p[0],p[1])); ctx.closePath();
+      ctx.fillStyle = isSel?'rgba(47,111,209,.16)':isMergeFirst?'rgba(31,157,99,.16)':(on?'rgba(196,69,44,.14)':'rgba(154,164,175,.1)');
+      ctx.fill();
+      ctx.lineWidth=isSel?3:2.5; ctx.strokeStyle=col; ctx.stroke();
+      ctx.restore();
+      const [bx,by]=pxPts[0], rad=15, cx2=bx+rad+4, cy2=by+rad+4;
       ctx.save();
       ctx.beginPath(); ctx.arc(cx2,cy2,rad,0,Math.PI*2); ctx.fillStyle=col; ctx.fill();
       ctx.lineWidth=2; ctx.strokeStyle='#fff'; ctx.stroke();
       ctx.fillStyle='#fff'; ctx.font='700 15px "IBM Plex Mono"'; ctx.textAlign='center'; ctx.textBaseline='middle';
       ctx.fillText(String(i+1),cx2,cy2+1);
       ctx.restore();
+      if(isSel && eagleTool==='edit'){ /* draggable vertex handles — only shown for the
+        selected room while the edit tool is active, so they don't clutter every box */
+        pxPts.forEach(p=>{ ctx.save(); ctx.fillStyle='#fff'; ctx.lineWidth=2; ctx.strokeStyle='#2f6fd1';
+          ctx.beginPath(); ctx.rect(p[0]-5,p[1]-5,10,10); ctx.fill(); ctx.stroke(); ctx.restore(); });
+      }
     });
+    if(eagleDrawing && eagleDrawing.pnum===pnum){
+      ctx.save(); ctx.strokeStyle='#2f6fd1'; ctx.lineWidth=2; ctx.setLineDash([6,4]);
+      if(eagleDrawing.type==='rect' && eagleDrawing.cur){
+        const p1=toPx(eagleDrawing.start), p2=toPx(eagleDrawing.cur);
+        ctx.strokeRect(Math.min(p1[0],p2[0]),Math.min(p1[1],p2[1]),Math.abs(p2[0]-p1[0]),Math.abs(p2[1]-p1[1]));
+      } else if(eagleDrawing.type==='poly' && eagleDrawing.pts.length){
+        const pxPts=eagleDrawing.pts.map(toPx);
+        ctx.beginPath(); pxPts.forEach((p,k)=>k===0?ctx.moveTo(p[0],p[1]):ctx.lineTo(p[0],p[1]));
+        if(eagleDrawing.cur){ const cp=toPx(eagleDrawing.cur); ctx.lineTo(cp[0],cp[1]); }
+        ctx.stroke();
+        pxPts.forEach(p=>{ ctx.beginPath(); ctx.arc(p[0],p[1],4,0,Math.PI*2); ctx.fillStyle='#2f6fd1'; ctx.fill(); });
+      }
+      ctx.restore();
+    }
+    if(eagleSplitLine && eagleSplitLine.pnum===pnum && eagleSplitLine.a && eagleSplitLine.b){
+      const p1=toPx(eagleSplitLine.a), p2=toPx(eagleSplitLine.b);
+      ctx.save(); ctx.strokeStyle='#1f9d63'; ctx.lineWidth=2.5; ctx.setLineDash([4,3]);
+      ctx.beginPath(); ctx.moveTo(p1[0],p1[1]); ctx.lineTo(p2[0],p2[1]); ctx.stroke(); ctx.restore();
+    }
   }
   vp.paint=paint;
   if(vp.img) paint();
   else { const img=new Image(); img.onload=()=>{ vp.img=img; paint(); }; img.src=pageEntry.img; }
 
-  cv.style.cursor='grab';
+  cv.style.cursor=eagleTool==='select'?'grab':'crosshair';
   cv.addEventListener('wheel',e=>{
     e.preventDefault(); if(!vp.img) return;
     const b=cv.getBoundingClientRect();
@@ -1537,7 +1763,90 @@ function initEagleMapCanvas(cv, pageEntry, pnum){
     vp.panY=my-iy*newEff-(cvH-vp.img.height*newEff)/2;
     paint();
   },{passive:false});
-  cv.addEventListener('mousedown',e=>{ eagleDrag={vp,cv,cvW,cvH,lx:e.clientX,ly:e.clientY}; cv.style.cursor='grabbing'; });
+  cv.addEventListener('mousedown',e=>{
+    if(!vp.img) return;
+    const [norm,px]=eagleEvtNorm(cv,vp,e);
+    if(eagleTool==='select'){
+      eagleDrag={type:'pan',vp,cv,lx:e.clientX,ly:e.clientY}; cv.style.cursor='grabbing'; return;
+    }
+    if(eagleTool==='rect'){
+      eagleDrawing={pnum,type:'rect',start:norm,cur:norm};
+      eagleDrag={type:'rectdraw',vp,cv}; return;
+    }
+    if(eagleTool==='edit'){
+      if(eagleSel && eagleSel.pnum===pnum){
+        const selR=state.rooms[eagleSel.ri], poly=polyOf(selR);
+        if(poly){
+          const {ox,oy,dw,dh}=eagleXform(cv,vp);
+          for(let vi=0;vi<poly.length;vi++){
+            const sx=ox+poly[vi][0]*dw, sy=oy+poly[vi][1]*dh;
+            if(Math.hypot(px[0]-sx,px[1]-sy)<14){
+              eaglePushHistory(); eagleDrag={type:'vertex',vp,cv,ri:eagleSel.ri,vi}; return;
+            }
+          }
+          if(pointInPoly(norm,poly)){
+            eaglePushHistory(); eagleDrag={type:'move',vp,cv,ri:eagleSel.ri,lastNorm:norm}; return;
+          }
+        }
+      }
+      const hit=eagleRoomAt(pageEntry,norm);
+      eagleSel = hit? {pnum,ri:hit.i} : null;
+      paint(); return;
+    }
+    if(eagleTool==='delete'){
+      const hit=eagleRoomAt(pageEntry,norm);
+      if(hit && confirm(`Delete "${hit.r.name}"? This removes the room entirely, not just its boundary — undo brings it right back.`)){
+        eaglePushHistory(); state.rooms.splice(hit.i,1); eagleSel=null;
+        drawEagleEye(); render();
+      }
+      return;
+    }
+    if(eagleTool==='split'){
+      const hit=(eagleSel&&eagleSel.pnum===pnum) ? {r:state.rooms[eagleSel.ri],i:eagleSel.ri} : eagleRoomAt(pageEntry,norm);
+      if(!hit){ eagleSel=null; paint(); return; }
+      eagleSel={pnum,ri:hit.i};
+      eagleSplitLine={pnum,ri:hit.i,a:norm,b:norm};
+      eagleDrag={type:'split',vp,cv};
+      paint(); return;
+    }
+    if(eagleTool==='merge'){
+      const hit=eagleRoomAt(pageEntry,norm);
+      if(!hit) return;
+      if(!eagleMergeFirst){ eagleMergeFirst={pnum,ri:hit.i}; paint(); return; }
+      if(eagleMergeFirst.pnum!==pnum || eagleMergeFirst.ri===hit.i){ eagleMergeFirst=null; paint(); return; }
+      eaglePushHistory();
+      const rA=state.rooms[eagleMergeFirst.ri], rB=state.rooms[hit.i];
+      setRoomBoundary(rA, convexHull(polyOf(rA).concat(polyOf(rB))));
+      state.rooms.splice(hit.i,1);
+      eagleMergeFirst=null; eagleSel=null;
+      drawEagleEye(); render(); return;
+    }
+  });
+  cv.addEventListener('mousemove',e=>{
+    if(!vp.img || eagleDrag || eagleTool!=='poly') return; /* dragging is handled by
+      the shared window listener; this is only the poly rubber-band preview */
+    if(eagleDrawing && eagleDrawing.pnum===pnum && eagleDrawing.type==='poly'){
+      eagleDrawing.cur=eagleEvtNorm(cv,vp,e)[0]; paint();
+    }
+  });
+  cv.addEventListener('click',e=>{
+    if(!vp.img || eagleTool!=='poly') return;
+    const [norm,px]=eagleEvtNorm(cv,vp,e);
+    if(!eagleDrawing || eagleDrawing.pnum!==pnum || eagleDrawing.type!=='poly'){
+      eagleDrawing={pnum,type:'poly',pts:[norm],cur:norm}; paint(); return;
+    }
+    const {ox,oy,dw,dh}=eagleXform(cv,vp), first=eagleDrawing.pts[0];
+    const sx=ox+first[0]*dw, sy=oy+first[1]*dh;
+    if(eagleDrawing.pts.length>=3 && Math.hypot(px[0]-sx,px[1]-sy)<14){ finishPolyDraw(pnum, eagleDrawing.pts); return; }
+    eagleDrawing.pts.push(norm); paint();
+  });
+  cv.addEventListener('dblclick',e=>{
+    if(!vp.img || eagleTool!=='poly' || !eagleDrawing || eagleDrawing.pnum!==pnum || eagleDrawing.type!=='poly') return;
+    e.preventDefault();
+    if(eagleDrawing.pts.length>=4) eagleDrawing.pts.pop(); /* the second click of this
+      double-click already got appended by the 'click' handler above — drop it */
+    if(eagleDrawing.pts.length>=3) finishPolyDraw(pnum, eagleDrawing.pts);
+  });
   ensureEagleDragListeners();
 }
 function drawEagleEye(){
@@ -1559,7 +1868,15 @@ function drawEagleEye(){
     html+='<div class="sheetbox" style="padding:16px"><p class="hint">No rooms yet — run "Analyze plans" on the Import page, or add a room by hand with the "+ Add room…" menu above.</p></div>';
   }
   if(eagleMode==='map'){
-    html+='<p class="hint" style="margin-bottom:10px">Scroll to zoom, drag to pan — room boxes stay locked to the plan.</p>';
+    html+=`<div class="segs" style="max-width:700px;margin-bottom:8px;flex-wrap:wrap">
+      ${[['select','Pan/select'],['rect','Rectangle'],['poly','Polygon'],['edit','Edit shape'],['delete','Delete'],['split','Split'],['merge','Merge']]
+        .map(([k,name])=>`<button class="eagleTool ${eagleTool===k?'on':''}" data-t="${k}">${name}</button>`).join('')}
+    </div>
+    <div class="segs" style="max-width:200px;margin-bottom:10px">
+      <button id="eagleUndoBtn" ${eagleUndoStack.length?'':'disabled'}>Undo</button>
+      <button id="eagleRedoBtn" ${eagleRedoStack.length?'':'disabled'}>Redo</button>
+    </div>
+    <p class="hint" style="margin-bottom:10px">${eagleToolHint()}</p>`;
     for(const pnum of pageNums){
       html+=`<div class="sheetbox" style="margin-bottom:16px"><span class="stamp">Page ${pnum}</span><canvas class="draw" data-mappage="${pnum}" width="1600" height="1200"></canvas></div>`;
     }
@@ -1578,6 +1895,15 @@ function drawEagleEye(){
   wrap.innerHTML=html;
 
   wrap.querySelectorAll('.eagleModeBtn').forEach(b=>b.addEventListener('click',()=>{ eagleMode=b.dataset.m; drawEagleEye(); }));
+  wrap.querySelectorAll('.eagleTool').forEach(b=>b.addEventListener('click',()=>{
+    eagleTool=b.dataset.t;
+    eagleDrawing=null; eagleSplitLine=null; eagleMergeFirst=null; /* switching tools cancels
+      whatever was mid-action instead of leaving a stale draw/cut hanging around */
+    if(eagleTool!=='edit') eagleSel=null;
+    drawEagleEye();
+  }));
+  const eub=wrap.querySelector('#eagleUndoBtn'); if(eub) eub.addEventListener('click', eagleUndo);
+  const erb=wrap.querySelector('#eagleRedoBtn'); if(erb) erb.addEventListener('click', eagleRedoFn);
 
   if(eagleMode==='map'){
     for(const pnum of pageNums){
@@ -2291,6 +2617,28 @@ function deleteProject(id){
 $('btnProjects').addEventListener('click',()=>{ renderProjectsList(); $('projModal').classList.add('on'); });
 $('projClose').addEventListener('click',()=>$('projModal').classList.remove('on'));
 $('projModal').addEventListener('click',e=>{ if(e.target.id==='projModal') $('projModal').classList.remove('on'); });
+
+$('newRoomCreate').addEventListener('click',()=>{
+  if(!eaglePending) return;
+  const name=($('newRoomName').value||'').trim() || 'New Room';
+  const type=$('newRoomType').value;
+  eaglePushHistory();
+  const r=newRoom(TYPES[type]?type:'kitchen', name);
+  r.source={page:eaglePending.pnum, poly:eaglePending.poly, bbox:polyBBoxOf(eaglePending.poly)};
+  state.rooms.push(r);
+  eaglePending=null;
+  $('newRoomModal').classList.remove('on');
+  drawEagleEye(); render();
+});
+$('newRoomClose').addEventListener('click', closeNewRoomModal);
+$('newRoomModal').addEventListener('click',e=>{ if(e.target.id==='newRoomModal') closeNewRoomModal(); });
+document.addEventListener('keydown',e=>{
+  if(e.key!=='Escape' || eagleMode!=='map') return;
+  if($('newRoomModal').classList.contains('on')){ closeNewRoomModal(); return; }
+  if(eagleDrawing || eagleSplitLine || eagleMergeFirst || eagleSel){
+    eagleDrawing=null; eagleSplitLine=null; eagleMergeFirst=null; eagleSel=null; drawEagleEye();
+  }
+});
 $('btnSaveToLib').addEventListener('click',saveCurrentProject);
 
 /* autosave (best-effort) */
