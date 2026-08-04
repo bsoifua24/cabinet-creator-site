@@ -2324,8 +2324,8 @@ function buildRoomBar(){
   bar.innerHTML = state.rooms.map((r,i)=>
     `<div class="rchip ${i===state.active?'on':''}" data-i="${i}">#${i+1} ${r.name}<i data-x="${i}">×</i></div>`).join('') +
     `<select id="addType"><option value="">+ Add room…</option>
-     <option value="kitchen">Kitchen</option><option value="bath">Bathroom</option>
-     <option value="laundry">Laundry</option><option value="closet">Closet</option></select>
+     ${Object.entries(ROOM_CATEGORIES).map(([k,c])=>`<option value="${k}">${c.label}${c.hasCabinets?'':' (no cabinets)'}</option>`).join('')}
+     </select>
      <button id="btnClearRooms" class="ghost" style="padding:6px 12px;font-size:11px">Clear all</button>`;
   bar.querySelectorAll('.rchip').forEach(ch=>ch.addEventListener('click',e=>{
     if(e.target.dataset.x!==undefined){
@@ -2341,9 +2341,10 @@ function buildRoomBar(){
     state.active=Number(ch.dataset.i); rebuildAll();
   }));
   $('addType').addEventListener('change',e=>{
-    if(!e.target.value) return;
-    const n = state.rooms.filter(r=>r.type===e.target.value).length;
-    state.rooms.push(newRoom(e.target.value, TYPES[e.target.value].label+(n?` ${n+1}`:'')));
+    const category=e.target.value; if(!category) return;
+    const cat=ROOM_CATEGORIES[category];
+    const n = state.rooms.filter(r=>r.category===category).length;
+    state.rooms.push(newRoom(cat.engineType, cat.label+(n?` ${n+1}`:''), category));
     state.active=state.rooms.length-1; rebuildAll();
   });
   $('btnClearRooms').addEventListener('click',()=>{
