@@ -380,14 +380,20 @@ function greedyFill(width, out, code, near){
 }
 function towerFill(width, out, r){
   const cfg = r.cfg; let rem = width, i = 0;
-  const useDrw = !!cfg.A.drawers;
+  const useDrw = !!cfg.A.drawers, allowRod = r.type==='closet'; /* a hang rod only
+    makes sense for an actual closet — a kitchen/bath/laundry storage wall should
+    never end in a clothes rod, so its leftover width folds into a cabinet instead */
   while(rem >= 18){
     const w = Math.min(24, rem);
     const drw = useDrw && i===0;
     out.push({code:(drw?'TWR-D':'TWR-S')+Math.round(w), w, type:'tower', label:drw?'DRW TWR':'SHELF TWR', tall:TALL_H});
     rem -= w; i++;
   }
-  if(rem > .01) out.push({code:'ROD'+Math.ceil(rem), w:rem, type:'rod', label:'HANG'});
+  if(rem > .01){
+    if(allowRod) out.push({code:'ROD'+Math.ceil(rem), w:rem, type:'rod', label:'HANG'});
+    else if(out.length) out[out.length-1].w += rem;
+    else out.push({code:(useDrw?'TWR-D':'TWR-S')+Math.round(rem), w:rem, type:'tower', label:useDrw?'DRW TWR':'SHELF TWR', tall:TALL_H});
+  }
 }
 /* builds the fixed-item list in the user's chosen left-to-right order
    (cfg.order, an array of fixture keys) — falls back to the room type's
@@ -849,7 +855,10 @@ function draw3D(){
 
   function placeRun(lay,orient,id){
     function pos(t,off){ if(orient==='back')return[t,off]; if(orient==='front')return[W-t,D-off];
-      if(orient==='left')return[off,t]; return [W-off, D-lay.L + t]; }
+      if(orient==='left')return[off,t]; return [W-off, t]; /* 'right': mirror of 'left' —
+        anchored at z=0 (the back-wall corner) same as 'left', not the front, or a
+        Wall C shorter than Wall A leaves a gap at the back-right corner instead of
+        butting flush against Wall B's end */ }
     const rotY=(orient==='left'||orient==='right')?Math.PI/2:0;
     function put(w,h,d,t,yC,off,mat,edges=true){
       const [px,pz]=pos(t+w/2,off+d/2);
