@@ -305,6 +305,7 @@ function ensureRoomDefaults(r){
   if(r.bathUppers==null) r.bathUppers=false;
   if(r.type==='bath' && r.bathUppers && !r.upH) r.upH=30;
   if(r.type==='bath' && r.bathUppers && !r.upD) r.upD=7;
+  if(!r.storageWall) r.storageWall={A:false,B:false,C:false};
   if(r.included==null) r.included=true;
   if(r.source===undefined) r.source=null;
   return r;
@@ -323,6 +324,9 @@ function newRoom(type, name){
        island-specific extras that don't fit that shape */
     island:{enabled:false, depth:24, height:36, bar:false, barChairs:4, pendant:false, pendantCount:3},
     bathUppers:false,
+    /* per-wall: floor-to-ceiling storage cabinets (no countertop/upper split)
+       instead of the normal base+counter+upper run — a pantry-style wall */
+    storageWall:{A:false, B:false, C:false},
     included:true, source:null /* source: {page,bbox} when found by the AI takeoff, else null */
   };
   if(type==='kitchen'){ r.cfg.A={sink:true,dw:true,window:true}; r.cfg.B={range:true,fridge:true}; }
@@ -406,6 +410,16 @@ function layoutWall(r, id){
 
   const fixed = [];
   let endTall = null;
+
+  if(r.type!=='closet' && r.storageWall && r.storageWall[id]){
+    /* storage wall: same treatment as a closet — floor-to-ceiling towers,
+       no fixed fixtures, no countertop, no separate upper cabinets */
+    towerFill(usable, items, r);
+    if(cr.end) items.push({code:'CR', w:24, type:'corner', label:'CNR'});
+    finish(items); const uppers = ride(items);
+    const twSum = items.reduce((a,b)=>a+b.w,0);
+    return {items, uppers, L: Math.max(L, twSum), overflow: Math.max(0, twSum-L)};
+  }
 
   if(r.type==='kitchen'){
     const defs={
@@ -498,7 +512,7 @@ function layoutWall(r, id){
       else if(it.type==='ls') u = {code:'WC24'+r.upH, w:LS, h:uH, bottom:uB, type:'cornerU'};
       else if(it.type==='range'){ const h=Math.max(12,uT-66); u={code:'W'+it.w+Math.round(h), w:it.w, h, bottom:66, type:'overRange'}; }
       else if(it.type==='fridge'){ const h=Math.max(12,uT-72); u={code:'W'+it.w+Math.round(h)+'-24D', w:it.w, h, bottom:72, type:'overRef'}; }
-      else if(it.type==='tall') u = null;
+      else if(it.type==='tall'||it.type==='tower'||it.type==='rod') u = null; /* already floor-to-ceiling — no separate upper to stack on top */
       else if(it.type==='sink' && r.cfg[id]?.window) u = {code:'', w:it.w, h:0, bottom:uB, type:'window'};
       else if(it.type==='filler') u = {code:'F', w:it.w, h:uH, bottom:uB, type:'fillerU'};
       else u = {code:'W'+Math.round(it.w)+r.upH, w:it.w, h:uH, bottom:uB, type:'upper'};
@@ -600,7 +614,8 @@ function drawPlan(){
       c.strokeRect(x+w*.28,y+h*.1,w*.44,h*.2);c.restore(); }
     if(it.type==='rod'){ line(c,x+4,y+h*.5,x+w-4,y+h*.5,2,'#5d6d80',[10,6]); }
   }
-  function runH(lay,yTop,flip){
+  function runH(lay,yTop,flip,id){
+    const stw=!!(r.storageWall&&r.storageWall[id]);
     rect(c,X(0),Y(yTop)-(flip?0:6),lay.L*s,6,2,'#1b2a3a','#1b2a3a');
     for(const it of lay.items){
       const x=X(it.x), w=it.w*s, y=flip?Y(yTop)-bd*s:Y(yTop), h=bd*s;
@@ -609,13 +624,15 @@ function drawPlan(){
       if(it.type!=='filler'&&it.type!=='gap') txt(c,it.label,x+w/2,y+h/2,Math.min(16,w/3.6));
       decorate(it,x,y,w,h,true);
     }
-    if(r.type!=='closet'){
+    if(r.type!=='closet' && !stw){
       const ce=flip?Y(yTop)-(bd+1.5)*s:Y(yTop)+(bd+1.5)*s; line(c,X(0),ce,X(lay.L),ce,1.5,'#8b7c55');
       if(hasUppers(r)){const ue=flip?Y(yTop)-r.upD*s:Y(yTop)+r.upD*s; line(c,X(0),ue,X(lay.L),ue,1.5,'#5d6d80',[8,6]);}
     }
+    if(stw) txt(c,'STORAGE WALL',X(lay.L/2),flip?Y(yTop)-bd*s-14:Y(yTop)+bd*s+14,13,'#5d6d80');
     dimH(c,X(0),X(lay.L),flip?Y(yTop)+40:Y(yTop)-40,fmt(lay.L)+'"');
   }
-  function runV(lay,xSide,rt){
+  function runV(lay,xSide,rt,id){
+    const stw=!!(r.storageWall&&r.storageWall[id]);
     rect(c,X(xSide)-(rt?0:6),Y(0),6,lay.L*s,2,'#1b2a3a','#1b2a3a');
     for(const it of lay.items){
       const y=Y(it.x), h=it.w*s, x=rt?X(xSide)-bd*s:X(xSide), w=bd*s;
@@ -624,16 +641,17 @@ function drawPlan(){
       if(it.type!=='filler'&&it.type!=='gap'){c.save();c.translate(x+w/2,y+h/2);c.rotate(rt?-Math.PI/2:Math.PI/2);txt(c,it.label,0,0,Math.min(16,h/3.6));c.restore();}
       decorate(it,x,y,w,h,false);
     }
-    if(r.type!=='closet'){
+    if(r.type!=='closet' && !stw){
       const ce=rt?X(xSide)-(bd+1.5)*s:X(xSide)+(bd+1.5)*s; line(c,ce,Y(0),ce,Y(lay.L),1.5,'#8b7c55');
       if(hasUppers(r)){const ue=rt?X(xSide)-r.upD*s:X(xSide)+r.upD*s; line(c,ue,Y(0),ue,Y(lay.L),1.5,'#5d6d80',[8,6]);}
     }
+    if(stw){c.save();c.translate(rt?X(xSide)-bd*s-14:X(xSide)+bd*s+14,Y(lay.L/2));c.rotate(rt?-Math.PI/2:Math.PI/2);txt(c,'STORAGE WALL',0,0,13,'#5d6d80');c.restore();}
     dimV(c,Y(0),Y(lay.L),rt?X(xSide)+40:X(xSide)-40,fmt(lay.L)+'"');
   }
-  if(r.shape==='single') runH(A,0,false);
-  else if(r.shape==='L'){runH(A,0,false);runV(B,0,false);}
-  else if(r.shape==='galley'){runH(A,0,false);runH(B,H,true);}
-  else {runH(B,0,false);runV(A,0,false);runV(C,W,true);}
+  if(r.shape==='single') runH(A,0,false,'A');
+  else if(r.shape==='L'){runH(A,0,false,'A');runV(B,0,false,'B');}
+  else if(r.shape==='galley'){runH(A,0,false,'A');runH(B,H,true,'B');}
+  else {runH(B,0,false,'B');runV(A,0,false,'A');runV(C,W,true,'C');}
 
   /* freestanding island — its own block below the perimeter run, no wall
      line behind it and no upper-cabinet dashed line (islands don't have
@@ -717,7 +735,7 @@ function drawElev(){
     } else dimH(c,x,x+w,Yf(0)+34,fmt(it.w)+'"',13);
   }
   /* countertop */
-  if(r.type!=='closet'){
+  if(r.type!=='closet' && !(r.storageWall&&r.storageWall[elevWall])){
     for(const seg of counterSegments(lay.items)){
       const cx1=X(seg.t0), cx2=X(seg.t1);
       rect(c,cx1-4,Yf(ctH),cx2-cx1+8,Math.max(2,r.ctT*s),2,'#1b2a3a',topF);
@@ -741,7 +759,8 @@ function drawElev(){
   }
   /* dims */
   const dx=X(0)-56;
-  if(r.baseH>0){ dimV(c,Yf(r.baseH),Yf(0),dx,fmt(r.baseH)+'"');
+  if(r.storageWall && r.storageWall[elevWall]){ dimV(c,Yf(TALL_H),Yf(0),dx,fmt(TALL_H)+'"'); }
+  else if(r.baseH>0){ dimV(c,Yf(r.baseH),Yf(0),dx,fmt(r.baseH)+'"');
     if(hasUppers(r)){ dimV(c,Yf(upperBottom(r)),Yf(ctH),dx,fmt(r.splash)+'"'); dimV(c,Yf(upperTop(r)),Yf(upperBottom(r)),dx,fmt(r.upH)+'"'); } }
   dimV(c,Yf(ceil),Yf(0),X(0)-110,fmt(ceil)+'"');
   dimH(c,X(0),X(L),Yf(0)+76,fmt(L)+'" OVERALL');
@@ -828,7 +847,7 @@ function draw3D(){
 
   {const geo=new THREE.BoxGeometry(W,4,D);const m=new THREE.Mesh(geo,mFlr);m.position.set(W/2,-2,D/2);m.receiveShadow=true;g.add(m);}
 
-  function placeRun(lay,orient){
+  function placeRun(lay,orient,id){
     function pos(t,off){ if(orient==='back')return[t,off]; if(orient==='front')return[W-t,D-off];
       if(orient==='left')return[off,t]; return [W-off, D-lay.L + t]; }
     const rotY=(orient==='left'||orient==='right')?Math.PI/2:0;
@@ -914,7 +933,7 @@ function draw3D(){
       if(it.type!=='dw'&&it.type!=='filler'&&it.type!=='corner') doorFace(it.w-.5,bh-3,it.x+.25,gapB+bh/2,bd);
       if(r.toe>0 && !floatVanity) put(it.w-6,r.toe,bd-3,it.x+3,r.toe/2,0,mCabD,false);
     }
-    if(r.type!=='closet'){
+    if(r.type!=='closet' && !(r.storageWall&&r.storageWall[id])){
       for(const seg of counterSegments(lay.items)){
         put(seg.t1-seg.t0,Math.max(1,r.ctT),bd+1.5,seg.t0,counterH(r)-r.ctT/2,0,mTop);
         for(const i of seg.items) if(i.type==='sink') sinkCut(i);
@@ -1041,10 +1060,10 @@ function draw3D(){
       }
     }
   }
-  if(r.shape==='single')placeRun(lays.A,'back');
-  else if(r.shape==='L'){placeRun(lays.A,'back');placeRun(lays.B,'left');}
-  else if(r.shape==='galley'){placeRun(lays.A,'back');placeRun(lays.B,'front');}
-  else {placeRun(lays.B,'back');placeRun(lays.A,'left');placeRun(lays.C,'right');}
+  if(r.shape==='single')placeRun(lays.A,'back','A');
+  else if(r.shape==='L'){placeRun(lays.A,'back','A');placeRun(lays.B,'left','B');}
+  else if(r.shape==='galley'){placeRun(lays.A,'back','A');placeRun(lays.B,'front','B');}
+  else {placeRun(lays.B,'back','B');placeRun(lays.A,'left','A');placeRun(lays.C,'right','C');}
   if(hasIsland3D) placeIsland();
 
   three.scene.add(g);
@@ -1600,11 +1619,16 @@ function buildSidebar(){
   </div>
   <div class="sect"><h3>Fixtures per wall</h3>
     ${ids.map(i=>{
-      const ov = layoutWall(r,i).overflow;
+      const ov = layoutWall(r,i).overflow, stw = r.type!=='closet' && !!(r.storageWall&&r.storageWall[i]);
       return `<div class="wallcard"><h4>WALL ${i}</h4>
+      ${r.type!=='closet' ? `<div class="segs" style="margin-bottom:10px">
+        <button class="wMode ${!stw?'on':''}" data-wall="${i}" data-stw="0">Countertop</button>
+        <button class="wMode ${stw?'on':''}" data-wall="${i}" data-stw="1">Storage wall</button>
+      </div>` : ''}
+      ${stw ? `<div class="hint">Floor-to-ceiling storage cabinets, no countertop or upper split — like a pantry wall. No fixtures on a storage wall; switch back to Countertop to add a sink, range, etc.</div>` : `
       ${Object.entries(t.fixtures).map(([k,name])=>`<label class="chk"><input type="checkbox" class="wFix" data-wall="${i}" data-k="${k}" ${r.cfg[i]&&r.cfg[i][k]?'checked':''}>${name}</label>`).join('')}
       ${orderRowsHtml(t, r.cfg[i]||{}, i)}
-      ${ov>0.5?`<div class="hint" style="color:var(--dim);font-weight:600">⚠ These fixtures need ~${fmt(Number(r.walls[i])+ov)}" — wall is only ${fmt(r.walls[i])}". Uncheck a fixture, add a linen/tall elsewhere, or lengthen this wall.</div>`:''}
+      ${ov>0.5?`<div class="hint" style="color:var(--dim);font-weight:600">⚠ These fixtures need ~${fmt(Number(r.walls[i])+ov)}" — wall is only ${fmt(r.walls[i])}". Uncheck a fixture, add a linen/tall elsewhere, or lengthen this wall.</div>`:''}`}
     </div>`;
     }).join('')}
   </div>
@@ -1657,6 +1681,12 @@ function buildSidebar(){
   side.querySelectorAll('.wLen').forEach(el=>el.addEventListener('input',()=>{r.walls[el.dataset.wall]=Number(el.value)||0;render();}));
   side.querySelectorAll('.wFix').forEach(el=>el.addEventListener('change',()=>{
     r.cfg[el.dataset.wall]=r.cfg[el.dataset.wall]||{}; r.cfg[el.dataset.wall][el.dataset.k]=el.checked; buildSidebar(); render();}));
+  side.querySelectorAll('.wMode').forEach(b=>b.addEventListener('click',()=>{
+    const on = b.dataset.stw==='1';
+    r.storageWall=r.storageWall||{}; r.storageWall[b.dataset.wall]=on;
+    if(on) r.cfg[b.dataset.wall]={}; /* storage wall has no fixtures — drop any that were set */
+    buildSidebar(); render();
+  }));
   side.querySelectorAll('.ordBtn').forEach(b=>b.addEventListener('click',()=>{
     const cfgObj=r.cfg[b.dataset.wall]||(r.cfg[b.dataset.wall]={});
     const seq=effectiveOrder(t, cfgObj);
