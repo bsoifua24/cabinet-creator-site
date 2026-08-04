@@ -443,6 +443,7 @@ function layoutWall(r, id){
       };
       stgFixed.push(...buildFixed(cfg, defs, ['fridge','fridgeXL']));
     }
+    if(cfg.tvNiche) stgFixed.push({code:'TVNICHE', w:Math.max(24,Number(cfg.tvNicheW)||60), type:'tvniche', label:'TV NICHE'});
     const stgRawFill = usable - stgFixed.reduce((a,b)=>a+b.w,0);
     const stgFill = Math.max(0, stgRawFill), stgOverflow = stgRawFill<0 ? -stgRawFill : 0;
     function fillOne(w){
@@ -461,7 +462,14 @@ function layoutWall(r, id){
       if(!flushL){ filled++; fillOne(filled===stgSlots ? stgFill-stgPer*(stgSlots-1) : stgPer); }
       let sfi=0;
       for(const f of stgFixed){
-        items.push(f); sfi++;
+        /* a TV niche only replaces the *upper* band at this spot — the lower
+           band still gets a normal cabinet here (a media console under the
+           TV), so push a plain base cabinet tagged for the uppers pass below
+           instead of the raw 'tvniche' fixed item */
+        items.push(f.type==='tvniche'
+          ? {code:'B'+Math.round(f.w), w:f.w, type:'base', label:'B'+Math.round(f.w), tvNiche:true}
+          : f);
+        sfi++;
         if(sfi===stgFixed.length && flushR) continue;
         filled++; fillOne(filled===stgSlots ? stgFill-stgPer*(stgSlots-1) : stgPer);
       }
@@ -481,6 +489,7 @@ function layoutWall(r, id){
         }
         continue;
       }
+      else if(it.tvNiche) uppers.push({code:'TVNICHE', w:it.w, x:it.x, h:upperH2, bottom:upperBottom2, type:'tvNiche'});
       else if(it.type==='corner') uppers.push({code:'WC24', w:it.w, x:it.x, h:upperH2, bottom:upperBottom2, type:'cornerU'});
       else if(it.type==='ls') uppers.push({code:'WC24'+r.upH, w:it.w, x:it.x, h:upperH2, bottom:upperBottom2, type:'cornerU'});
       else if(it.type==='filler') uppers.push({code:'F', w:it.w, x:it.x, h:upperH2, bottom:upperBottom2, type:'fillerU'});
@@ -872,6 +881,9 @@ function drawElev(){
       line(c,x+w*.2,Yf(u.bottom+u.h*.85),x+w*.5,Yf(u.bottom+u.h*.3),1.2,'#b9c8d4'); txt(c,'MIRROR',x+w/2,Yf(u.bottom+u.h/2)+0,13,'#5d6d80'); continue; }
     if(u.type==='window'){ rect(c,x+w*.1,Yf(upperTop(r)),w*.8,Number(r.upH)*s,1.5,'#5d6d80');
       line(c,x+w*.5,Yf(upperTop(r)),x+w*.5,Yf(upperBottom(r)),1,'#5d6d80'); txt(c,'WINDOW',x+w/2,Yf(upperBottom(r)+r.upH/2)+18,13,'#5d6d80'); continue; }
+    if(u.type==='tvNiche'){ rect(c,x,Yf(u.bottom+u.h),w,u.h*s,2,'#1b2a3a',cabF);
+      rect(c,x+w*.08,Yf(u.bottom+u.h*.85),w*.84,u.h*.7*s,2,'#0b0b0d','#15151a');
+      txt(c,'TV',x+w/2,Yf(u.bottom+u.h/2),16,'#fff'); continue; }
     if(u.h<=0) continue;
     rect(c,x,Yf(u.bottom+u.h),w,u.h*s,2,'#1b2a3a', u.glass?'#dceaf2':(u.type==='fillerU'?'#e6ebef':cabF));
     if(u.type!=='fillerU' && u.open){
@@ -955,6 +967,9 @@ function draw3D(){
   const handleHex=parseInt(HANDLECOL[r.fin.handleColor].h.slice(1),16);
   const mHandle=new THREE.MeshStandardMaterial({color:handleHex, roughness:.3, metalness:.75});
   const handleMul=[.7,1,1.35][r.fin.handleSize];
+  const mTV=new THREE.MeshStandardMaterial({color:0x0b0b0d, roughness:.15, metalness:.1});
+  const mGranite=new THREE.MeshStandardMaterial({color:0x2c2f31, map:stoneTexture(false), roughness:.28});
+  mGranite.map.repeat.set(6,1);
   const edgeCol=lum(CABCOL[r.fin.cab].h)>.5?0x6b6b66:0x1f1a14;
   const edge=geo=>new THREE.LineSegments(new THREE.EdgesGeometry(geo),new THREE.LineBasicMaterial({color:edgeCol}));
 
@@ -1112,10 +1127,25 @@ function draw3D(){
         put(ww-3, .8, .6, wx+1.5, wB+wH/2, -2.3, mSash, false);
         continue;
       }
+      if(u.type==='tvNiche'){ /* recessed alcove — the screen sits inset from the surrounding
+        cabinet fronts instead of proud of them, reading as flush-mounted into the wall */
+        put(u.w-.5,u.h,ud,u.x+.25,u.bottom+u.h/2,0,mCabD);
+        put(u.w-7,u.h-7,.8,u.x+3.5,u.bottom+u.h/2,ud-2.2,mTV,false);
+        continue;
+      }
       if(u.h<=0)continue;
       const d=u.type==='overRef'?24:ud;
       put(u.w-.5,u.h,d,u.x+.25,u.bottom+u.h/2,0, u.glass?mGlass:(u.type==='fillerU'?mCabD:mCab));
       if(u.type!=='fillerU'&&!u.open&&!u.glass) doorFace(u.w-.5,u.h-3,u.x+.25,u.bottom+u.h/2,d);
+    }
+    /* granite accent — a stone-textured strip filling the reveal gap between
+       a storage wall's lower and upper bands. Segmented the same way the
+       countertop is, so it breaks around a fridge instead of running
+       straight through it (fridges go well above this reveal's height). */
+    if(r.storageWall&&r.storageWall[id]&&r.cfg[id]?.granite){
+      for(const seg of counterSegments(lay.items)){
+        put(seg.t1-seg.t0,1.5,bd,seg.t0,r.baseH+.75,0,mGranite);
+      }
     }
   }
   /* freestanding island — a simplified sibling of placeRun, not a
@@ -1837,6 +1867,9 @@ function buildSidebar(){
       <label class="chk"><input type="checkbox" class="wFix" data-wall="${i}" data-k="fridge" ${r.cfg[i]&&r.cfg[i].fridge?'checked':''}>Refrigerator 36"</label>
       <label class="chk"><input type="checkbox" class="wFix" data-wall="${i}" data-k="fridgeXL" ${r.cfg[i]&&r.cfg[i].fridgeXL?'checked':''}>Fridge/Freezer (double) 72"</label>
       ${(r.cfg[i]&&(r.cfg[i].fridge||r.cfg[i].fridgeXL)) ? edgeFlushHtml(r.cfg[i], i) : ''}` : ''}
+      <label class="chk"><input type="checkbox" class="tvNiche" data-wall="${i}" ${r.cfg[i]&&r.cfg[i].tvNiche?'checked':''}>Flush TV niche</label>
+      ${(r.cfg[i]&&r.cfg[i].tvNiche) ? `<div class="fld"><label>TV niche width (in)</label><input type="number" step="1" min="24" class="tvNicheW" data-wall="${i}" value="${r.cfg[i].tvNicheW||60}"></div>` : ''}
+      <label class="chk"><input type="checkbox" class="granite" data-wall="${i}" ${r.cfg[i]&&r.cfg[i].granite?'checked':''}>Granite accent panel (reveal strip)</label>
       <div class="hint">Floor-to-ceiling built-in cabinetry — base cabinets topped with wall cabinets, no functional countertop.${r.type==='kitchen'?' A fridge can still go here, flush with the surrounding doors.':' No other fixtures on a storage wall; switch back to Countertop to add a sink, etc.'}</div>` : `
       ${Object.entries(t.fixtures).map(([k,name])=>`<label class="chk"><input type="checkbox" class="wFix" data-wall="${i}" data-k="${k}" ${r.cfg[i]&&r.cfg[i][k]?'checked':''}>${name}</label>`).join('')}
       ${orderRowsHtml(t, r.cfg[i]||{}, i)}
@@ -1910,6 +1943,15 @@ function buildSidebar(){
   }));
   side.querySelectorAll('.stgStyle').forEach(el=>el.addEventListener('change',()=>{
     r.storageStyle=r.storageStyle||{}; r.storageStyle[el.dataset.wall]=el.value; render();
+  }));
+  side.querySelectorAll('.tvNiche').forEach(el=>el.addEventListener('change',()=>{
+    r.cfg[el.dataset.wall]=r.cfg[el.dataset.wall]||{}; r.cfg[el.dataset.wall].tvNiche=el.checked; buildSidebar(); render();
+  }));
+  side.querySelectorAll('.tvNicheW').forEach(el=>el.addEventListener('input',()=>{
+    r.cfg[el.dataset.wall]=r.cfg[el.dataset.wall]||{}; r.cfg[el.dataset.wall].tvNicheW=Math.max(24,Number(el.value)||60); render();
+  }));
+  side.querySelectorAll('.granite').forEach(el=>el.addEventListener('change',()=>{
+    r.cfg[el.dataset.wall]=r.cfg[el.dataset.wall]||{}; r.cfg[el.dataset.wall].granite=el.checked; render();
   }));
   side.querySelectorAll('.edgeFlush').forEach(el=>el.addEventListener('change',()=>{
     r.cfg[el.dataset.wall]=r.cfg[el.dataset.wall]||{}; r.cfg[el.dataset.wall].edgeFlush=el.value||undefined; render();
