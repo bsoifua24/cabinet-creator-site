@@ -364,6 +364,7 @@ function ensureRoomDefaults(r){
   if(r.included==null) r.included=true;
   if(r.source===undefined) r.source=null;
   if(!r.category || !ROOM_CATEGORIES[r.category]) r.category=inferCategory(r);
+  if(!r.status || !['pending','active','done'].includes(r.status)) r.status='pending';
   return r;
 }
 function newRoom(type, name, category){
@@ -385,7 +386,9 @@ function newRoom(type, name, category){
        instead of the normal base+counter+upper run — a pantry-style wall */
     storageWall:{A:false, B:false, C:false},
     storageStyle:{A:'doors', B:'doors', C:'doors'},
-    included:true, source:null /* source: {page,bbox} when found by the AI takeoff, else null */
+    included:true, source:null, /* source: {page,bbox} when found by the AI takeoff, else null */
+    status:'pending' /* pending|active|done — position in the Phase 5 room queue,
+      meaningful only for hasCabinets categories; see roomQueue() */
   };
   if(type==='kitchen'){ r.cfg.A={sink:true,dw:true,window:true}; r.cfg.B={range:true,fridge:true}; }
   if(type==='bath'){ r.cfg.A={vanity:true,toilet:true}; }
@@ -1893,6 +1896,38 @@ function initEagleMapCanvas(cv, pageEntry, pnum){
   });
   ensureEagleDragListeners();
 }
+/* ---- PHASE 5: room queue — every hasCabinets-category room, in
+   state.rooms order, with a pending/active/done status. Sequence numbers
+   are computed fresh from this filtered order every time rather than
+   stored on the room, so they can't go stale after a delete/split/merge
+   the way a persisted number could. */
+function roomQueue(){
+  return state.rooms.map((r,i)=>({r,i})).filter(({r})=>(ROOM_CATEGORIES[r.category]||ROOM_CATEGORIES.other).hasCabinets);
+}
+function ensureQueueActive(){
+  const q=roomQueue();
+  if(!q.length || q.some(({r})=>r.status==='active')) return;
+  const firstPending=q.find(({r})=>r.status!=='done');
+  if(firstPending) firstPending.r.status='active';
+}
+function queueJumpTo(ri){
+  roomQueue().forEach(({r})=>{ if(r.status==='active') r.status='pending'; });
+  state.rooms[ri].status='active';
+  state.active=ri;
+  rebuildAll();
+}
+function queueMarkDone(){
+  /* operates on the queue's own active entry, not state.active — if the
+     user navigated elsewhere (room chip bar, Edit → ) after the queue was
+     drawn but before clicking this, state.active could point somewhere
+     else and this would silently mark the wrong room done */
+  const q=roomQueue(), activeEntry=q.find(({r})=>r.status==='active');
+  if(!activeEntry) return;
+  activeEntry.r.status='done';
+  const next=q.find(({r})=>r.status==='pending');
+  if(next){ next.r.status='active'; state.active=next.i; }
+  rebuildAll();
+}
 function drawEagleEye(){
   const wrap=$('eagleWrap'); if(!wrap) return;
   const byPage={};
@@ -1906,13 +1941,14 @@ function drawEagleEye(){
 
   const aiDetectedCount = state.rooms.filter(r=>r.source && !r.source.manual).length;
   let html=`<div style="display:flex;align-items:center;gap:14px;margin-bottom:14px;flex-wrap:wrap">
-    <div class="segs" style="max-width:220px">
+    <div class="segs" style="max-width:320px">
       <button class="eagleModeBtn ${eagleMode==='list'?'on':''}" data-m="list">List</button>
       <button class="eagleModeBtn ${eagleMode==='map'?'on':''}" data-m="map">Map</button>
+      <button class="eagleModeBtn ${eagleMode==='queue'?'on':''}" data-m="queue">Queue</button>
     </div>
     ${aiDetectedCount ? `<button id="eagleClearAI" class="ghost" style="padding:6px 12px;font-size:11px">Clear ${aiDetectedCount} AI-detected room${aiDetectedCount===1?'':'s'} — keep blueprints blank</button>` : ''}
   </div>`;
-  if(!pageNums.length && !others.length){
+  if(!pageNums.length && !others.length && eagleMode!=='queue'){
     html+='<div class="sheetbox" style="padding:16px"><p class="hint">No rooms yet — run "Analyze plans" on the Import page, or add a room by hand with the "+ Add room…" menu above.</p></div>';
   }
   if(eagleMode==='map'){
@@ -1937,6 +1973,52 @@ function drawEagleEye(){
     }
     if(others.length){
       html+=`<div class="wallcard"><h4>OTHER ROOMS — no blueprint reference</h4>${others.map(({r,i})=>eagleRow(r,i)).join('')}</div>`;
+    }
+  } else if(eagleMode==='queue'){
+    ensureQueueActive();
+    const q=roomQueue(), doneN=q.filter(({r})=>r.status==='done').length;
+    if(!q.length){
+      html+='<div class="sheetbox" style="padding:16px"><p class="hint">No cabinet-bearing rooms yet. Garage/Other rooms are excluded from the queue by design — draw or add a Kitchen, Bath, Laundry, Pantry, etc. to populate it.</p></div>';
+    } else {
+      const allDone = doneN===q.length;
+      html+=`<div class="sheetbox" style="padding:16px;margin-bottom:14px">
+        <p class="hint" style="font-weight:600;color:var(--ink);margin-bottom:10px">${doneN} of ${q.length} room${q.length===1?'':'s'} done</p>
+        <div style="background:var(--hatch);border-radius:3px;height:8px;overflow:hidden;margin-bottom:14px">
+          <div style="background:#2f8a58;height:100%;width:${Math.round(doneN/q.length*100)}%"></div>
+        </div>
+        ${q.map(({r,i},qi)=>{
+          const cat=ROOM_CATEGORIES[r.category]||ROOM_CATEGORIES.other;
+          const badge = r.status==='done'?'✓ Done':r.status==='active'?'● Active':'Pending';
+          const badgeCol = r.status==='done'?'#2f8a58':r.status==='active'?'#2f6fd1':'var(--ink-soft)';
+          return `<div class="queueRow" data-i="${i}" style="display:flex;align-items:center;justify-content:space-between;padding:9px 6px;border-bottom:1px solid var(--line);cursor:pointer;${r.status==='active'?'background:rgba(47,111,209,.07)':''}">
+            <span style="display:flex;align-items:center;gap:8px">
+              <span style="width:10px;height:10px;border-radius:2px;background:${cat.color};display:inline-block;flex:none"></span>
+              <b>#${qi+1}</b> ${r.name} <span style="color:var(--ink-soft);font:500 11px var(--mono)">${cat.label}</span>
+            </span>
+            <span style="font:600 11px var(--mono);color:${badgeCol}">${badge}</span>
+          </div>`;
+        }).join('')}
+      </div>`;
+      const activeEntry=q.find(({r})=>r.status==='active');
+      if(!allDone && activeEntry){
+        html+=`<button class="primary" id="queueDoneBtn" style="width:100%;padding:12px;font-size:13px">Mark "${activeEntry.r.name}" done — next room →</button>`;
+      } else if(allDone){
+        html+=`<div class="sheetbox" style="padding:16px">
+          <h3 style="font:600 15px var(--mono);letter-spacing:.05em;margin-bottom:10px">ALL ROOMS DONE — READY FOR PRICING</h3>
+          <p class="hint" style="margin-bottom:14px">${q.length} room${q.length===1?'':'s'} finalized. Export the schedule or open the full print set.</p>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px">
+            <button id="queueExportCsv" class="primary">Export CSV</button>
+            <button id="queuePrintAll" class="ghost">Open print set</button>
+          </div>
+          ${q.map(({r,i})=>{
+            const {baseLF,upperLF,tallN}=buildSchedule(r);
+            return `<div class="wallcard" style="margin-bottom:10px">
+              <h4>#${i+1} ${r.name.toUpperCase()}</h4>
+              <p class="hint">base ${(baseLF/12).toFixed(1)} LF · uppers ${(upperLF/12).toFixed(1)} LF · tall ×${tallN} · ${finLine(r)}</p>
+            </div>`;
+          }).join('')}
+        </div>`;
+      }
     }
   } else {
     for(const pnum of pageNums){
@@ -1968,13 +2050,17 @@ function drawEagleEye(){
   }));
   const eub=wrap.querySelector('#eagleUndoBtn'); if(eub) eub.addEventListener('click', eagleUndo);
   const erb=wrap.querySelector('#eagleRedoBtn'); if(erb) erb.addEventListener('click', eagleRedoFn);
+  wrap.querySelectorAll('.queueRow').forEach(el=>el.addEventListener('click',()=>queueJumpTo(Number(el.dataset.i))));
+  const qdb=wrap.querySelector('#queueDoneBtn'); if(qdb) qdb.addEventListener('click', queueMarkDone);
+  const qxc=wrap.querySelector('#queueExportCsv'); if(qxc) qxc.addEventListener('click', csv);
+  const qpa=wrap.querySelector('#queuePrintAll'); if(qpa) qpa.addEventListener('click', ()=>$('btnPrint').click());
 
   if(eagleMode==='map'){
     for(const pnum of pageNums){
       const cv=wrap.querySelector(`canvas[data-mappage="${pnum}"]`);
       initEagleMapCanvas(cv, byPage[pnum], pnum);
     }
-  } else {
+  } else if(eagleMode==='list'){
     for(const pnum of pageNums){
       const cv=wrap.querySelector(`canvas[data-page="${pnum}"]`);
       renderAnnotatedPage(byPage[pnum], byPage[pnum].rooms).then(annotated=>{
