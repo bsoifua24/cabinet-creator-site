@@ -338,6 +338,20 @@ const counterH = r => (r=r||room(), r.baseH + r.ctT);
 const upperBottom = r => (r=r||room(), counterH(r) + r.splash);
 const upperTop = r => (r=r||room(), upperBottom(r) + Number(r.upH));
 const hasUppers = r => (r=r||room(), TYPES[r.type].uppers || (r.type==='bath' && r.bathUppers));
+/* splits a cabinet run into contiguous countertop segments, breaking at any
+   item that shouldn't have a countertop slab over it (a fridge, tall/tower
+   cabinet, washer/dryer, etc.) — a single unbroken box across the whole run
+   used to plow straight through those items, overlapping their geometry */
+const COUNTERLESS = ['fridge','tall','gap','washer','dryer','tower','rod'];
+function counterSegments(items){
+  const segs=[]; let run=[];
+  for(const it of items){
+    if(COUNTERLESS.includes(it.type)){ if(run.length){segs.push(run); run=[];} }
+    else run.push(it);
+  }
+  if(run.length) segs.push(run);
+  return segs.map(run=>({t0:run[0].x, t1:run[run.length-1].x+run[run.length-1].w, items:run}));
+}
 /* Wall A's t=0 and Wall B's t=0 land on the exact same physical point (verified
    against both the 2D plan's runH/runV and the 3D placeRun's pos() math) — that's
    the room's actual shared corner. So the wall carrying the lazy-susan treatment
@@ -841,23 +855,37 @@ function draw3D(){
      const [px,pz]=pos(lay.L/2,-2.5); m.position.set(px,ceil/2,pz); m.rotation.y=rotY; m.receiveShadow=true; g.add(m);}
     for(const it of lay.items){
       if(it.type==='fridge'){
-        const fw=it.w-.5, fx=it.x+.25;
+        const fw=it.w-.5, fx=it.x+.25, isXL=it.code==='REF72', midX=fx+fw/2;
         if(r.fin.fridgeBuiltIn){
           put(fw,FR_H,bd,fx,FR_H/2,0,mCab); /* panel-ready: flush, cabinet-matched */
-          doorFace(fw-3,FR_H-6,fx+1.5,FR_H/2,bd);
           const panelTop=upperTop(r); /* fill the gap up to the upper-cabinet line with a
             matching panel, so it reads as one continuous built-in column instead of a
             standalone box floating short of the surrounding cabinetry */
-          if(panelTop>FR_H){
-            const ph=panelTop-FR_H;
-            put(fw,ph,bd,fx,FR_H+ph/2,0,mCab);
-            doorFace(fw-3,ph-3,fx+1.5,FR_H+ph/2,bd);
+          const ph=panelTop>FR_H?panelTop-FR_H:0;
+          if(ph) put(fw,ph,bd,fx,FR_H+ph/2,0,mCab);
+          if(isXL){ /* double-wide: two separate door panels split by a visible
+            center divider, so it reads as fridge on one side, freezer on the other */
+            const half=fw/2-.75, rightT=midX+.75;
+            doorFace(half-3,FR_H-6,fx+1.5,FR_H/2,bd);
+            doorFace(half-3,FR_H-6,rightT+1.5,FR_H/2,bd);
+            if(ph){ doorFace(half-3,ph-3,fx+1.5,FR_H+ph/2,bd); doorFace(half-3,ph-3,rightT+1.5,FR_H+ph/2,bd); }
+            put(1,FR_H+ph-6,bd-2,midX-.5,(FR_H+ph)/2,1,mTrim,false);
+          } else {
+            doorFace(fw-3,FR_H-6,fx+1.5,FR_H/2,bd);
+            if(ph) doorFace(fw-3,ph-3,fx+1.5,FR_H+ph/2,bd);
           }
         } else {
           put(fw,FR_H,30,fx,FR_H/2,0,mAppl);
-          put(.6,FR_H-6,.6,fx+fw/2-.3,FR_H/2,30,mTrim,false); /* center door seam */
-          put(.7,14,1,fx+fw*.5-3.5,FR_H*.58,30,mTrim,false);  /* handles */
-          put(.7,14,1,fx+fw*.5+2.8,FR_H*.58,30,mTrim,false);
+          if(isXL){
+            const q=fw/4;
+            put(1,FR_H-4,1,midX-.5,FR_H/2,30,mTrim,false); /* fridge/freezer divider */
+            put(.7,14,1,fx+q-3.5,FR_H*.58,30,mTrim,false); put(.7,14,1,fx+q+2.8,FR_H*.58,30,mTrim,false);
+            put(.7,14,1,fx+fw-q-3.5,FR_H*.58,30,mTrim,false); put(.7,14,1,fx+fw-q+2.8,FR_H*.58,30,mTrim,false);
+          } else {
+            put(.6,FR_H-6,.6,fx+fw/2-.3,FR_H/2,30,mTrim,false); /* center door seam */
+            put(.7,14,1,fx+fw*.5-3.5,FR_H*.58,30,mTrim,false);  /* handles */
+            put(.7,14,1,fx+fw*.5+2.8,FR_H*.58,30,mTrim,false);
+          }
         }
         continue;
       }
@@ -886,16 +914,16 @@ function draw3D(){
       if(r.toe>0 && !floatVanity) put(it.w-6,r.toe,bd-3,it.x+3,r.toe/2,0,mCabD,false);
     }
     if(r.type!=='closet'){
-      const span=lay.items.filter(i=>!['fridge','tall','gap','washer','dryer','tower','rod'].includes(i.type));
-      if(span.length){const t0=span[0].x,t1=span[span.length-1].x+span[span.length-1].w;
-        put(t1-t0,Math.max(1,r.ctT),bd+1.5,t0,counterH(r)-r.ctT/2,0,mTop);
-        if(it_sink(span)) sinkCut(span); }
-      function it_sink(sp){return sp.some(i=>i.type==='sink');}
-      function sinkCut(sp){ for(const i of sp) if(i.type==='sink'){
+      for(const seg of counterSegments(lay.items)){
+        put(seg.t1-seg.t0,Math.max(1,r.ctT),bd+1.5,seg.t0,counterH(r)-r.ctT/2,0,mTop);
+        for(const i of seg.items) if(i.type==='sink') sinkCut(i);
+      }
+      function sinkCut(i){
         put(i.w*.6,1.2,bd*.55,i.x+i.w*.2,counterH(r)+.4,bd*.18,mAppl,false);
         put(1,5,1,i.x+i.w*.47,counterH(r)+2.5,bd*.06,mTrim,false);  /* faucet riser — at the back, against the wall/backsplash */
         put(3.2,1,1,i.x+i.w*.44,counterH(r)+5,bd*.13,mTrim,false);  /* faucet spout, arcing slightly forward over the basin */
-        if(r.type==='bath'&&r.fin.sink===1) put(i.w*.42,4,i.w*.42>bd*.5?bd*.5:i.w*.42,i.x+i.w*.29,counterH(r)+2,bd*.22,mAppl,false); } }
+        if(r.type==='bath'&&r.fin.sink===1) put(i.w*.42,4,i.w*.42>bd*.5?bd*.5:i.w*.42,i.x+i.w*.29,counterH(r)+2,bd*.22,mAppl,false);
+      }
     }
     for(const u of (lay.uppers||[])){
       if(u.type==='mirror'){put(u.w*.76,u.h,1.2,u.x+u.w*.12,u.bottom+u.h/2,-1.2+2,mMir,false);continue;}
@@ -948,12 +976,25 @@ function draw3D(){
     for(const it of lay.items){
       if(it.type==='sink') sinkItems.push(it);
       if(it.type==='fridge'){
-        const fw=it.w-.5, fx=it.x+.25, fMat=r.fin.fridgeBuiltIn?mCab:mAppl;
+        const fw=it.w-.5, fx=it.x+.25, fMat=r.fin.fridgeBuiltIn?mCab:mAppl, isXL=it.code==='REF72', midX=fx+fw/2;
         put2(fw,FR_H,idp,fx,FR_H/2,0,fMat);
-        if(r.fin.fridgeBuiltIn) doorFace2(fw-3,FR_H-6,fx+1.5,FR_H/2,0);
-        else { put2(.6,FR_H-6,.6,fx+fw/2-.3,FR_H/2,-.3,mTrim,false);
+        if(r.fin.fridgeBuiltIn){
+          if(isXL){
+            const half=fw/2-.75, rightT=midX+.75;
+            doorFace2(half-3,FR_H-6,fx+1.5,FR_H/2,0);
+            doorFace2(half-3,FR_H-6,rightT+1.5,FR_H/2,0);
+            put2(1,FR_H-6,idp-2,midX-.5,FR_H/2,1,mTrim,false);
+          } else doorFace2(fw-3,FR_H-6,fx+1.5,FR_H/2,0);
+        } else if(isXL){
+          const q=fw/4;
+          put2(1,FR_H-4,1,midX-.5,FR_H/2,-.3,mTrim,false); /* fridge/freezer divider */
+          put2(.7,14,1,fx+q-3.5,FR_H*.58,-.3,mTrim,false); put2(.7,14,1,fx+q+2.8,FR_H*.58,-.3,mTrim,false);
+          put2(.7,14,1,fx+fw-q-3.5,FR_H*.58,-.3,mTrim,false); put2(.7,14,1,fx+fw-q+2.8,FR_H*.58,-.3,mTrim,false);
+        } else {
+          put2(.6,FR_H-6,.6,fx+fw/2-.3,FR_H/2,-.3,mTrim,false);
           put2(.7,14,1,fx+fw*.5-3.5,FR_H*.58,-.3,mTrim,false);
-          put2(.7,14,1,fx+fw*.5+2.8,FR_H*.58,-.3,mTrim,false); }
+          put2(.7,14,1,fx+fw*.5+2.8,FR_H*.58,-.3,mTrim,false);
+        }
         continue;
       }
       if(it.type==='range'){
@@ -966,7 +1007,9 @@ function draw3D(){
       if(itoe>0) put2(it.w-6,itoe,idp-3,it.x+3,itoe/2,0,mCabD,false);
     }
     const overhang=r.island.bar?13:0;
-    put2(lay.L,Math.max(1,r.ctT),idp+overhang,0,ih-r.ctT/2,0,mTop);
+    for(const seg of counterSegments(lay.items)){
+      put2(seg.t1-seg.t0,Math.max(1,r.ctT),idp+overhang,seg.t0,ih-r.ctT/2,0,mTop);
+    }
     /* sink basin + faucet — faucet on the walkway side, same side as the
        doors, so it doesn't sit in front of bar-seating overhang */
     for(const it of sinkItems){
