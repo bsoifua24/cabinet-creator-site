@@ -26,8 +26,8 @@ Rules:
   bath (vanity/sink + fixtures, incl. powder rooms),
   laundry (washer/dryer/utility sink),
   closet (built-in storage with no plumbing fixture — pantries, mudroom lockers, linen, office built-ins, media walls, garage storage).
-- "bbox" is normalized [x0,y0,x1,y1], 0–1 fractions of the page, tightly cropping that room's plan with a small margin.
-- Include a space even if you're not fully certain — a person reviews every result before anything is priced.`;
+- "bbox" is normalized [x0,y0,x1,y1], 0–1 fractions of the full page image. Locate the building's exterior wall outline first, then draw the box tight around ONLY that room's actual walls and fixtures — its edges should land on or just inside the nearest wall lines. NEVER let the box extend past the exterior wall into blank page margin, the title block, a dimension string, or a notes/schedule column outside the structure. If you're not sure exactly where a wall falls, err smaller/tighter, not generous — a box that's a little too small still points a person to the right room; a box drifting into empty space outside the house is actively wrong and wastes their time re-locating it.
+- Include a space even if you're not fully certain about its type or extent — a person reviews every result before anything is priced. Uncertainty about WHAT a room is is fine to flag; a box floating outside the building is not.`;
 
 exports.handler = async (event) => {
   const headers = { 'content-type': 'application/json' };
