@@ -11,15 +11,19 @@ Respond with ONLY valid JSON, no markdown fences, no commentary, in exactly this
 {"rooms":[
  {"name":"Kitchen","type":"kitchen","shape":"L","ceiling":96,
   "walls":{"A":150,"B":126,"C":0},
-  "fixtures":{"A":{"sink":true,"dw":true,"window":true},"B":{"range":true,"fridge":true}},
+  "fixtures":{"A":{"sink":true,"dw":true,"window":true},"B":{"fridgeXL":true}},
+  "island":{"width":90,"depth":36,"sink":true},
   "sourcePage":3,
-  "notes":"anything ambiguous"}
+  "notes":"anything ambiguous, including any floating/open shelving shown that doesn't fit a fixture slot below"}
 ]}
 Rules:
 - type is one of: kitchen, bath, laundry, closet — pick the nearest fit for non-standard spaces (wet bar/butler's pantry → kitchen, mudroom/pantry/office built-ins/media wall → closet, powder room → bath).
 - shape is one of: single, L, galley, U. Wall A first; for L, A is the longer leg; for U, B is the back wall.
 - All wall lengths in INCHES along the face that receives cabinets. Omit or set 0 for unused walls.
-- fixtures keys by room type — kitchen: sink, dw, range, fridge, window · bath: vanity, vanity2, linen, toilet · laundry: washer, dryer, sink, tall · closet: drawers, shelves, rods.
+- fixtures keys by room type — kitchen: sink, dw, range, fridge, fridgeXL, trash, spice, ice, window · bath: vanity, vanity2, linen, toilet · laundry: washer, dryer, sink, tall · closet: drawers, shelves, rods.
+- Refrigerator width matters: a single ~30-36" box tagged REF or F is "fridge". A wider ~60-72" footprint, or two adjacent appliance boxes/tags at that fixture (commonly a pair like "F" + "R" for freezer + refrigerator, or "REF/FRZ") is one double-wide unit — report it as "fridgeXL", not two separate fridges.
+- A freestanding rectangle apart from the perimeter walls with counter/cabinet symbols around its edge is a kitchen island — report it under "island" (width = its long dimension in inches, depth = its short dimension). If a sink symbol (a basin outline, or two basins side by side with a shared faucet mark = a double-bowl sink) sits on the island, set island.sink=true; if the island doesn't have a sink or you don't see one, omit the sink key rather than guessing.
+- Cabinets are drawn as a double-ruled rectangle along the wall (indicating real depth, ~12-24"), often with a door-swing diagonal or drawer-front hash marks. Floating/open shelving is drawn much shallower — a single thin line or a shallow ledge with no door-swing mark, sometimes labeled "OPEN SHLVG" or "FLOATING SHELF" on the sheet's notes or legend. Don't count open shelving as a fixture slot below; just call it out by wall in "notes" so a person can add it by hand.
 - sourcePage: if the image for this room was preceded by a caption like "Page 3 — likely...", echo that page number here as an integer. Omit if you can't tell.
 - If a dimension is not legible, estimate from scale and say so in notes. Never invent rooms.`;
 

@@ -1782,6 +1782,12 @@ function applyRoomsFromJson(d, hits, sourcePages){
     for(const w of ['A','B','C']){ if(x.walls&&x.walls[w]) r.walls[w]=Number(x.walls[w]);
       r.cfg[w]=(x.fixtures&&x.fixtures[w])?x.fixtures[w]:{}; }
     if(!wallIds(r).some(w=>Object.values(r.cfg[w]||{}).some(Boolean))) r.cfg=newRoom(r.type).cfg;
+    if(r.type==='kitchen' && x.island && Number(x.island.width)>0){
+      r.island.enabled=true;
+      r.walls.ISLAND=Number(x.island.width);
+      if(Number(x.island.depth)>0) r.island.depth=Number(x.island.depth);
+      if(x.island.sink) r.cfg.ISLAND={sink:true};
+    }
     r.included=true;
     r.source=null;
     if(x.sourcePage!=null){
