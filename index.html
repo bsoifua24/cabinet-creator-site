@@ -177,12 +177,7 @@
     <div class="modal-head"><h3>New Room</h3><button id="newRoomClose">&times;</button></div>
     <div class="modal-body">
       <div class="fld"><label>Room name</label><input id="newRoomName" placeholder="e.g. Kitchen"></div>
-      <div class="fld"><label>Room type</label><select id="newRoomType">
-        <option value="kitchen">Kitchen</option>
-        <option value="bath">Bathroom</option>
-        <option value="laundry">Laundry</option>
-        <option value="closet">Closet / Pantry / Other storage</option>
-      </select></div>
+      <div class="fld"><label>Room type</label><select id="newRoomType"></select></div>
       <button class="primary" id="newRoomCreate" style="width:100%;margin-top:8px">Create room</button>
     </div>
   </div>
@@ -296,6 +291,41 @@ const TYPES = {
     fixtures:{drawers:'Drawer tower', shelves:'Shelf towers', rods:'Hanging rods'},
     orderable:[], sinks:[]}
 };
+/* ---- PHASE 3: room-type taxonomy for the guided/Map workflow ----
+   This is a display/classification layer on top of TYPES above, not a
+   replacement for it — TYPES (kitchen/bath/laundry/closet) is what the
+   layout engine actually builds cabinets against, and stays exactly as
+   it is for the existing wall-length Designer. A room drawn through the
+   Map boundary tool picks one of these 13 categories (r.category); each
+   maps to the nearest TYPES engine key (engineType) so the Designer side
+   still works, while color/hasCabinets drive how it's shown on the map
+   and (once the room queue exists) whether it's part of the approval
+   flow at all — a garage or "other" space can be traced and shown, but
+   isn't assumed to need a cabinet takeoff the way every other room is. */
+const ROOM_CATEGORIES = {
+  kitchen:      {label:'Kitchen',        color:'#c4452c', hasCabinets:true,  engineType:'kitchen'},
+  prepPantry:   {label:'Prep Pantry',    color:'#d9793f', hasCabinets:true,  engineType:'closet'},
+  walkinPantry: {label:'Walk-in Pantry', color:'#c98a2e', hasCabinets:true,  engineType:'closet'},
+  laundry:      {label:'Laundry',        color:'#2f8a72', hasCabinets:true,  engineType:'laundry'},
+  mudroom:      {label:'Mudroom',        color:'#5c8a3f', hasCabinets:true,  engineType:'closet'},
+  powder:       {label:'Powder',         color:'#3f9ab0', hasCabinets:true,  engineType:'bath'},
+  bathroom:     {label:'Bathroom',       color:'#2f6fd1', hasCabinets:true,  engineType:'bath'},
+  masterBath:   {label:'Master Bath',    color:'#4351b8', hasCabinets:true,  engineType:'bath'},
+  walkinCloset: {label:'Walk-in Closet', color:'#7a56b8', hasCabinets:true,  engineType:'closet'},
+  bar:          {label:'Bar',            color:'#a13f8f', hasCabinets:true,  engineType:'kitchen'},
+  office:       {label:'Office',         color:'#8a6a3f', hasCabinets:true,  engineType:'closet'},
+  garage:       {label:'Garage',         color:'#767c82', hasCabinets:false, engineType:'closet'},
+  other:        {label:'Other',          color:'#9aa4af', hasCabinets:false, engineType:'closet'},
+};
+/* reasonable category guess for a room that predates this field (an
+   AI-detected room, or one hand-created before Phase 3 shipped) */
+function inferCategory(r){
+  if(r.type==='kitchen') return 'kitchen';
+  if(r.type==='laundry') return 'laundry';
+  if(r.type==='bath') return 'bathroom';
+  return 'walkinCloset';
+}
+function hexRgba(hex,a){ const n=parseInt(hex.slice(1),16); return `rgba(${n>>16&255},${n>>8&255},${n&255},${a})`; }
 const DOORS = ['Slab','Shaker','Raised Panel'];
 const CABCOL = [
   {n:'Painted White', h:'#f0ede6'}, {n:'Dove Grey', h:'#b9bdc1'}, {n:'Sage Green', h:'#8a9781'},
@@ -333,12 +363,14 @@ function ensureRoomDefaults(r){
   if(!r.storageStyle) r.storageStyle={A:'doors',B:'doors',C:'doors'};
   if(r.included==null) r.included=true;
   if(r.source===undefined) r.source=null;
+  if(!r.category || !ROOM_CATEGORIES[r.category]) r.category=inferCategory(r);
   return r;
 }
-function newRoom(type, name){
+function newRoom(type, name, category){
   const t = TYPES[type];
   const r = {
     id: Math.random().toString(36).slice(2,8), name: name || t.label, type,
+    category: (category && ROOM_CATEGORIES[category]) ? category : inferCategory({type}),
     shape: type==='kitchen' ? 'L' : 'single', ceil: 96, upH: t.upH, upD: t.upD,
     baseH:t.baseH, baseD:t.baseD, toe:t.toe, ctT:t.ctT, splash:t.splash,
     walls:{A: type==='kitchen'?150:96, B:120, C:120, ISLAND:84},
@@ -1478,10 +1510,14 @@ function renderAnnotatedPage(pageEntry, rooms){
   });
 }
 function eagleRow(r,i){
+  const cat=ROOM_CATEGORIES[r.category]||ROOM_CATEGORIES.other;
   return `<div class="chk" style="justify-content:space-between">
     <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin:0">
       <input type="checkbox" class="eagleChk" data-i="${i}" ${r.included!==false?'checked':''}>
-      <b>#${i+1}</b> ${r.name} <span style="color:var(--ink-soft);font:500 11px var(--mono)">(${TYPES[r.type]?TYPES[r.type].label:r.type})</span>
+      <b>#${i+1}</b> ${r.name}
+      <span style="display:inline-flex;align-items:center;gap:4px;color:var(--ink-soft);font:500 11px var(--mono)">
+        <span style="width:9px;height:9px;border-radius:2px;background:${cat.color};display:inline-block"></span>${cat.label}${cat.hasCabinets?'':' · no cabinets'}
+      </span>
     </label>
     <button class="eagleEdit" data-i="${i}" style="padding:4px 10px;font-size:11px">Edit →</button>
   </div>`;
@@ -1571,7 +1607,11 @@ function ensureEagleDragListeners(){
 }
 function openNewRoomModal(){
   const nm=$('newRoomName'); if(nm) nm.value='';
-  const ty=$('newRoomType'); if(ty) ty.value='kitchen';
+  const ty=$('newRoomType');
+  if(ty){
+    ty.innerHTML=Object.entries(ROOM_CATEGORIES).map(([k,c])=>
+      `<option value="${k}" ${k==='kitchen'?'selected':''}>${c.label}${c.hasCabinets?'':' (no cabinets)'}</option>`).join('');
+  }
   $('newRoomModal').classList.add('on');
   if(nm) nm.focus();
 }
@@ -1703,11 +1743,12 @@ function initEagleMapCanvas(cv, pageEntry, pnum){
       const on=r.included!==false;
       const isSel=eagleSel&&eagleSel.pnum===pnum&&eagleSel.ri===i;
       const isMergeFirst=eagleMergeFirst&&eagleMergeFirst.pnum===pnum&&eagleMergeFirst.ri===i;
-      const col=isSel?'#2f6fd1':isMergeFirst?'#1f9d63':(on?'#c4452c':'#9aa4af');
+      const catCol=(ROOM_CATEGORIES[r.category]||ROOM_CATEGORIES.other).color;
+      const col=isSel?'#2f6fd1':isMergeFirst?'#1f9d63':(on?catCol:'#9aa4af');
       const pxPts=poly.map(toPx);
       ctx.save();
       ctx.beginPath(); pxPts.forEach((p,k)=>k===0?ctx.moveTo(p[0],p[1]):ctx.lineTo(p[0],p[1])); ctx.closePath();
-      ctx.fillStyle = isSel?'rgba(47,111,209,.16)':isMergeFirst?'rgba(31,157,99,.16)':(on?'rgba(196,69,44,.14)':'rgba(154,164,175,.1)');
+      ctx.fillStyle = isSel?'rgba(47,111,209,.16)':isMergeFirst?'rgba(31,157,99,.16)':(on?hexRgba(catCol,.16):'rgba(154,164,175,.1)');
       ctx.fill();
       ctx.lineWidth=isSel?3:2.5; ctx.strokeStyle=col; ctx.stroke();
       ctx.restore();
@@ -1883,7 +1924,14 @@ function drawEagleEye(){
       <button id="eagleUndoBtn" ${eagleUndoStack.length?'':'disabled'}>Undo</button>
       <button id="eagleRedoBtn" ${eagleRedoStack.length?'':'disabled'}>Redo</button>
     </div>
-    <p class="hint" style="margin-bottom:10px">${eagleToolHint()}</p>`;
+    <p class="hint" style="margin-bottom:6px">${eagleToolHint()}</p>
+    <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:12px">
+      ${[...new Set(state.rooms.filter(r=>r.source).map(r=>r.category))].map(cat=>{
+        const c=ROOM_CATEGORIES[cat]||ROOM_CATEGORIES.other;
+        return `<span style="display:inline-flex;align-items:center;gap:5px;font:500 11px var(--mono);color:var(--ink-soft)">
+          <span style="width:11px;height:11px;border-radius:2px;background:${c.color};display:inline-block"></span>${c.label}</span>`;
+      }).join('')}
+    </div>`;
     for(const pnum of pageNums){
       html+=`<div class="sheetbox" style="margin-bottom:16px"><span class="stamp">Page ${pnum}</span><canvas class="draw" data-mappage="${pnum}" width="1600" height="1200"></canvas></div>`;
     }
@@ -2637,9 +2685,10 @@ $('projModal').addEventListener('click',e=>{ if(e.target.id==='projModal') $('pr
 $('newRoomCreate').addEventListener('click',()=>{
   if(!eaglePending) return;
   const name=($('newRoomName').value||'').trim() || 'New Room';
-  const type=$('newRoomType').value;
+  const category=$('newRoomType').value;
+  const cat=ROOM_CATEGORIES[category] || ROOM_CATEGORIES.kitchen;
   eaglePushHistory();
-  const r=newRoom(TYPES[type]?type:'kitchen', name);
+  const r=newRoom(cat.engineType, name, category);
   r.source={page:eaglePending.pnum, poly:eaglePending.poly, bbox:polyBBoxOf(eaglePending.poly), manual:true};
   state.rooms.push(r);
   state.active=state.rooms.length-1; /* jump straight to it — it's the room you just
