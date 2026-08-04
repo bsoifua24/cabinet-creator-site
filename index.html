@@ -306,6 +306,7 @@ function ensureRoomDefaults(r){
   if(r.type==='bath' && r.bathUppers && !r.upH) r.upH=30;
   if(r.type==='bath' && r.bathUppers && !r.upD) r.upD=7;
   if(!r.storageWall) r.storageWall={A:false,B:false,C:false};
+  if(!r.storageStyle) r.storageStyle={A:'doors',B:'doors',C:'doors'};
   if(r.included==null) r.included=true;
   if(r.source===undefined) r.source=null;
   return r;
@@ -327,6 +328,7 @@ function newRoom(type, name){
     /* per-wall: floor-to-ceiling storage cabinets (no countertop/upper split)
        instead of the normal base+counter+upper run — a pantry-style wall */
     storageWall:{A:false, B:false, C:false},
+    storageStyle:{A:'doors', B:'doors', C:'doors'},
     included:true, source:null /* source: {page,bbox} when found by the AI takeoff, else null */
   };
   if(type==='kitchen'){ r.cfg.A={sink:true,dw:true,window:true}; r.cfg.B={range:true,fridge:true}; }
@@ -418,13 +420,57 @@ function layoutWall(r, id){
   let endTall = null;
 
   if(r.type!=='closet' && r.storageWall && r.storageWall[id]){
-    /* storage wall: same treatment as a closet — floor-to-ceiling towers,
-       no fixed fixtures, no countertop, no separate upper cabinets */
-    towerFill(usable, items, r);
+    /* storage wall: two stacked cabinet bands (base + wall cabinets) with a
+       thin reveal instead of a functional countertop — reads as real built-in
+       "hutch" cabinetry, not one floor-to-ceiling slab, and lines up with the
+       ceiling-height line every other wall's uppers already use. Kitchen
+       storage walls can still take a flush/panel-ready fridge — common in
+       high-end built-in pantry walls. */
+    const style = (r.storageStyle && r.storageStyle[id]) || 'doors';
+    const stgFixed = [];
+    if(r.type==='kitchen'){
+      const defs={
+        fridge:{code:'REF', w:FR_W, type:'fridge', label:'REF 36"'},
+        fridgeXL:{code:'REF72', w:72, type:'fridge', label:'FRIDGE/FRZR 72"'},
+      };
+      stgFixed.push(...buildFixed(cfg, defs, ['fridge','fridgeXL']));
+    }
+    const stgRawFill = usable - stgFixed.reduce((a,b)=>a+b.w,0);
+    const stgFill = Math.max(0, stgRawFill), stgOverflow = stgRawFill<0 ? -stgRawFill : 0;
+    const stgSlots = stgFixed.length+1, stgPer = stgFill/stgSlots;
+    function fillOne(w){
+      const c=[]; greedyFill(w, c, 'B', false);
+      if(style==='drawers') c.forEach(x=>{ if(x.type==='base'){ x.type='db'; x.code='D'+x.code; x.label=x.code; } });
+      if(style==='open') c.forEach(x=>x.open=true);
+      items.push(...c);
+    }
+    let sfi=0;
+    fillOne(stgPer);
+    for(const f of stgFixed){ items.push(f); sfi++;
+      fillOne(sfi===stgSlots-1 ? stgFill-stgPer*(stgSlots-1) : stgPer); }
     if(cr.end) items.push({code:'CR', w:24, type:'corner', label:'CNR'});
-    finish(items); const uppers = ride(items);
-    const twSum = items.reduce((a,b)=>a+b.w,0);
-    return {items, uppers, L: Math.max(L, twSum), overflow: Math.max(0, twSum-L)};
+    finish(items);
+    const reveal=1.5, upperBottom2=r.baseH+reveal, upperTop2=Math.max(upperTop(r), Number(r.ceil)-3),
+      upperH2=Math.max(12, upperTop2-upperBottom2);
+    const uppers=[];
+    for(const it of items){
+      if(it.type==='fridge'){
+        if(!r.fin.fridgeBuiltIn){ /* built-in fridges extend their own matching panel to the ceiling
+          line — a freestanding appliance-style fridge needs a shallow cabinet over it instead,
+          same as a normal wall, or it'd leave a bare gap up to the ceiling */
+          const h=Math.max(12, upperTop2-72);
+          uppers.push({code:'W'+it.w+Math.round(h)+'-24D', w:it.w, x:it.x, h, bottom:72, type:'overRef'});
+        }
+        continue;
+      }
+      else if(it.type==='corner') uppers.push({code:'WC24', w:it.w, x:it.x, h:upperH2, bottom:upperBottom2, type:'cornerU'});
+      else if(it.type==='ls') uppers.push({code:'WC24'+r.upH, w:it.w, x:it.x, h:upperH2, bottom:upperBottom2, type:'cornerU'});
+      else if(it.type==='filler') uppers.push({code:'F', w:it.w, x:it.x, h:upperH2, bottom:upperBottom2, type:'fillerU'});
+      else uppers.push({code:'W'+Math.round(it.w)+Math.round(upperH2), w:it.w, x:it.x, h:upperH2, bottom:upperBottom2, type:'upper',
+        open: !!it.open || style==='open', glass: style==='glass'});
+    }
+    const stgSum = items.reduce((a,b)=>a+b.w,0);
+    return {items, uppers, L: Math.max(L, stgSum), overflow: Math.max(stgOverflow, stgSum-L)};
   }
 
   if(r.type==='kitchen'){
@@ -517,7 +563,7 @@ function layoutWall(r, id){
       if(it.type==='corner') u = {code:'WC24', w:24, h:uH, bottom:uB, type:'cornerU'};
       else if(it.type==='ls') u = {code:'WC24'+r.upH, w:LS, h:uH, bottom:uB, type:'cornerU'};
       else if(it.type==='range'){ const h=Math.max(12,uT-66); u={code:'W'+it.w+Math.round(h), w:it.w, h, bottom:66, type:'overRange'}; }
-      else if(it.type==='fridge'){ const h=Math.max(12,uT-72); u={code:'W'+it.w+Math.round(h)+'-24D', w:it.w, h, bottom:72, type:'overRef'}; }
+      else if(it.type==='fridge'){ if(!r.fin.fridgeBuiltIn){ const h=Math.max(12,uT-72); u={code:'W'+it.w+Math.round(h)+'-24D', w:it.w, h, bottom:72, type:'overRef'}; } /* else: the built-in fridge already extends its own matching panel up to uT — a separate overRef cabinet here would overlap it */ }
       else if(it.type==='tall'||it.type==='tower'||it.type==='rod') u = null; /* already floor-to-ceiling — no separate upper to stack on top */
       else if(it.type==='sink' && r.cfg[id]?.window) u = {code:'', w:it.w, h:0, bottom:uB, type:'window'};
       else if(it.type==='filler') u = {code:'F', w:it.w, h:uH, bottom:uB, type:'fillerU'};
@@ -630,9 +676,10 @@ function drawPlan(){
       if(it.type!=='filler'&&it.type!=='gap') txt(c,it.label,x+w/2,y+h/2,Math.min(16,w/3.6));
       decorate(it,x,y,w,h,true);
     }
-    if(r.type!=='closet' && !stw){
-      const ce=flip?Y(yTop)-(bd+1.5)*s:Y(yTop)+(bd+1.5)*s; line(c,X(0),ce,X(lay.L),ce,1.5,'#8b7c55');
-      if(hasUppers(r)){const ue=flip?Y(yTop)-r.upD*s:Y(yTop)+r.upD*s; line(c,X(0),ue,X(lay.L),ue,1.5,'#5d6d80',[8,6]);}
+    if(r.type!=='closet'){
+      if(!stw){ const ce=flip?Y(yTop)-(bd+1.5)*s:Y(yTop)+(bd+1.5)*s; line(c,X(0),ce,X(lay.L),ce,1.5,'#8b7c55'); }
+      if(hasUppers(r)||stw){ const upD2=stw?Math.max(r.upD,12):r.upD;
+        const ue=flip?Y(yTop)-upD2*s:Y(yTop)+upD2*s; line(c,X(0),ue,X(lay.L),ue,1.5,'#5d6d80',[8,6]); }
     }
     if(stw) txt(c,'STORAGE WALL',X(lay.L/2),flip?Y(yTop)-bd*s-14:Y(yTop)+bd*s+14,13,'#5d6d80');
     dimH(c,X(0),X(lay.L),flip?Y(yTop)+40:Y(yTop)-40,fmt(lay.L)+'"');
@@ -647,9 +694,10 @@ function drawPlan(){
       if(it.type!=='filler'&&it.type!=='gap'){c.save();c.translate(x+w/2,y+h/2);c.rotate(rt?-Math.PI/2:Math.PI/2);txt(c,it.label,0,0,Math.min(16,h/3.6));c.restore();}
       decorate(it,x,y,w,h,false);
     }
-    if(r.type!=='closet' && !stw){
-      const ce=rt?X(xSide)-(bd+1.5)*s:X(xSide)+(bd+1.5)*s; line(c,ce,Y(0),ce,Y(lay.L),1.5,'#8b7c55');
-      if(hasUppers(r)){const ue=rt?X(xSide)-r.upD*s:X(xSide)+r.upD*s; line(c,ue,Y(0),ue,Y(lay.L),1.5,'#5d6d80',[8,6]);}
+    if(r.type!=='closet'){
+      if(!stw){ const ce=rt?X(xSide)-(bd+1.5)*s:X(xSide)+(bd+1.5)*s; line(c,ce,Y(0),ce,Y(lay.L),1.5,'#8b7c55'); }
+      if(hasUppers(r)||stw){ const upD2=stw?Math.max(r.upD,12):r.upD;
+        const ue=rt?X(xSide)-upD2*s:X(xSide)+upD2*s; line(c,ue,Y(0),ue,Y(lay.L),1.5,'#5d6d80',[8,6]); }
     }
     if(stw){c.save();c.translate(rt?X(xSide)-bd*s-14:X(xSide)+bd*s+14,Y(lay.L/2));c.rotate(rt?-Math.PI/2:Math.PI/2);txt(c,'STORAGE WALL',0,0,13,'#5d6d80');c.restore();}
     dimV(c,Y(0),Y(lay.L),rt?X(xSide)+40:X(xSide)-40,fmt(lay.L)+'"');
@@ -730,7 +778,12 @@ function drawElev(){
     if(toe>0 && !floatVanity) rect(c,x+(it.type==='filler'?0:6),Yf(toe),w-(it.type==='filler'?0:12),toe*s,1.5,'#1b2a3a');
     rect(c,x,Yf(bH),w,(bH-gapB)*s,2,'#1b2a3a', it.type==='filler'?'#e6ebef':cabF);
     if(it.type==='dw'){ txt(c,'D/W',x+w/2,Yf(bH/2+gapB/2),18,tcol); }
-    else if(it.type!=='filler'){
+    else if(it.type==='filler'){ dimH(c,x,x+w,Yf(0)+34,fmt(it.w)+'"',13); }
+    else if(it.open){ /* open shelving: no door, just shelf tick lines */
+      for(let sh=gapB+12; sh<bH-6; sh+=12) line(c,x+3,Yf(sh),x+w-3,Yf(sh),1.3,'#00000033');
+      txt(c,it.label,x+w/2,Yf((bH+gapB)/2-3),Math.min(17,w/3.4),tcol);
+      dimH(c,x,x+w,Yf(0)+34,fmt(it.w)+'"',15);
+    } else {
       line(c,x,Yf(bH-6),x+w,Yf(bH-6),1.5);
       const dy=Yf(bH-6), dh=(bH-6-gapB)*s;
       if(it.type==='db'){ line(c,x,Yf(gapB+(bH-gapB)/3),x+w,Yf(gapB+(bH-gapB)/3),1.5); line(c,x,Yf(gapB+2*(bH-gapB)/3),x+w,Yf(gapB+2*(bH-gapB)/3),1.5); }
@@ -738,7 +791,7 @@ function drawElev(){
       else doorDetail(c,x,dy,w,dh,dstyle,s);
       txt(c,it.label,x+w/2,Yf((bH+gapB)/2-3),Math.min(17,w/3.4),tcol);
       dimH(c,x,x+w,Yf(0)+34,fmt(it.w)+'"',15);
-    } else dimH(c,x,x+w,Yf(0)+34,fmt(it.w)+'"',13);
+    }
   }
   /* countertop */
   if(r.type!=='closet' && !(r.storageWall&&r.storageWall[elevWall])){
@@ -755,8 +808,15 @@ function drawElev(){
     if(u.type==='window'){ rect(c,x+w*.1,Yf(upperTop(r)),w*.8,Number(r.upH)*s,1.5,'#5d6d80');
       line(c,x+w*.5,Yf(upperTop(r)),x+w*.5,Yf(upperBottom(r)),1,'#5d6d80'); txt(c,'WINDOW',x+w/2,Yf(upperBottom(r)+r.upH/2)+18,13,'#5d6d80'); continue; }
     if(u.h<=0) continue;
-    rect(c,x,Yf(u.bottom+u.h),w,u.h*s,2,'#1b2a3a', u.type==='fillerU'?'#e6ebef':cabF);
-    if(u.type!=='fillerU'){
+    rect(c,x,Yf(u.bottom+u.h),w,u.h*s,2,'#1b2a3a', u.glass?'#dceaf2':(u.type==='fillerU'?'#e6ebef':cabF));
+    if(u.type!=='fillerU' && u.open){
+      for(let sh=12; sh<u.h-6; sh+=12) line(c,x+3,Yf(u.bottom+u.h-sh),x+w-3,Yf(u.bottom+u.h-sh),1.3,'#00000033');
+      txt(c,u.code,x+w/2,Yf(u.bottom+u.h/2),Math.min(15,w/3.8),tcol);
+    } else if(u.type!=='fillerU' && u.glass){
+      rect(c,x+4,Yf(u.bottom+u.h-4),w-8,(u.h-8)*s,1,'#5d6d80');
+      line(c,x+w/2,Yf(u.bottom+u.h-4),x+w/2,Yf(u.bottom+4),1,'#5d6d80');
+      txt(c,u.code,x+w/2,Yf(u.bottom+u.h/2),Math.min(15,w/3.8),tcol);
+    } else if(u.type!=='fillerU'){
       if(u.w>=27){ line(c,x+w/2,Yf(u.bottom+u.h),x+w/2,Yf(u.bottom),1.5);
         doorDetail(c,x,Yf(u.bottom+u.h),w/2,u.h*s,dstyle,s); doorDetail(c,x+w/2,Yf(u.bottom+u.h),w/2,u.h*s,dstyle,s); }
       else doorDetail(c,x,Yf(u.bottom+u.h),w,u.h*s,dstyle,s);
@@ -765,7 +825,11 @@ function drawElev(){
   }
   /* dims */
   const dx=X(0)-56;
-  if(r.storageWall && r.storageWall[elevWall]){ dimV(c,Yf(TALL_H),Yf(0),dx,fmt(TALL_H)+'"'); }
+  if(r.storageWall && r.storageWall[elevWall]){
+    const su=(lay.uppers||[]).find(u=>u.h>0);
+    dimV(c,Yf(r.baseH),Yf(0),dx,fmt(r.baseH)+'"');
+    if(su) dimV(c,Yf(su.bottom+su.h),Yf(su.bottom),dx,fmt(su.h)+'"');
+  }
   else if(r.baseH>0){ dimV(c,Yf(r.baseH),Yf(0),dx,fmt(r.baseH)+'"');
     if(hasUppers(r)){ dimV(c,Yf(upperBottom(r)),Yf(ctH),dx,fmt(r.splash)+'"'); dimV(c,Yf(upperTop(r)),Yf(upperBottom(r)),dx,fmt(r.upH)+'"'); } }
   dimV(c,Yf(ceil),Yf(0),X(0)-110,fmt(ceil)+'"');
@@ -860,6 +924,10 @@ function draw3D(){
         Wall C shorter than Wall A leaves a gap at the back-right corner instead of
         butting flush against Wall B's end */ }
     const rotY=(orient==='left'||orient==='right')?Math.PI/2:0;
+    /* on a storage wall, its own hutch upper band may reach higher than the
+       room's normal upperTop(r) (it's clamped to near-ceiling) — a built-in
+       fridge's panel needs to extend to that same line, not stop short of it */
+    const ceilTarget = (r.storageWall&&r.storageWall[id]) ? Math.max(upperTop(r), Number(r.ceil)-3) : upperTop(r);
     function put(w,h,d,t,yC,off,mat,edges=true){
       const [px,pz]=pos(t+w/2,off+d/2);
       const geo=new THREE.BoxGeometry(w,h,d); const m=new THREE.Mesh(geo,mat);
@@ -887,7 +955,7 @@ function draw3D(){
         const fw=it.w-.5, fx=it.x+.25, isXL=it.code==='REF72', midX=fx+fw/2;
         if(r.fin.fridgeBuiltIn){
           put(fw,FR_H,bd,fx,FR_H/2,0,mCab); /* panel-ready: flush, cabinet-matched */
-          const panelTop=upperTop(r); /* fill the gap up to the upper-cabinet line with a
+          const panelTop=ceilTarget; /* fill the gap up to the upper-cabinet line with a
             matching panel, so it reads as one continuous built-in column instead of a
             standalone box floating short of the surrounding cabinetry */
           const ph=panelTop>FR_H?panelTop-FR_H:0;
@@ -939,7 +1007,7 @@ function draw3D(){
       const gapB = floatVanity ? r.toe+6 : r.toe;
       const bh=r.baseH-gapB;
       put(it.w-.5,bh,bd,it.x+.25,gapB+bh/2,0,it.type==='dw'?mAppl:mCab);
-      if(it.type!=='dw'&&it.type!=='filler'&&it.type!=='corner') doorFace(it.w-.5,bh-3,it.x+.25,gapB+bh/2,bd);
+      if(it.type!=='dw'&&it.type!=='filler'&&it.type!=='corner'&&!it.open) doorFace(it.w-.5,bh-3,it.x+.25,gapB+bh/2,bd);
       if(r.toe>0 && !floatVanity) put(it.w-6,r.toe,bd-3,it.x+3,r.toe/2,0,mCabD,false);
     }
     if(r.type!=='closet' && !(r.storageWall&&r.storageWall[id])){
@@ -966,8 +1034,8 @@ function draw3D(){
       }
       if(u.h<=0)continue;
       const d=u.type==='overRef'?24:ud;
-      put(u.w-.5,u.h,d,u.x+.25,u.bottom+u.h/2,0, u.type==='fillerU'?mCabD:mCab);
-      if(u.type!=='fillerU') doorFace(u.w-.5,u.h-3,u.x+.25,u.bottom+u.h/2,d);
+      put(u.w-.5,u.h,d,u.x+.25,u.bottom+u.h/2,0, u.glass?mGlass:(u.type==='fillerU'?mCabD:mCab));
+      if(u.type!=='fillerU'&&!u.open&&!u.glass) doorFace(u.w-.5,u.h-3,u.x+.25,u.bottom+u.h/2,d);
     }
   }
   /* freestanding island — a simplified sibling of placeRun, not a
@@ -1634,10 +1702,18 @@ function buildSidebar(){
         <button class="wMode ${!stw?'on':''}" data-wall="${i}" data-stw="0">Countertop</button>
         <button class="wMode ${stw?'on':''}" data-wall="${i}" data-stw="1">Storage wall</button>
       </div>` : ''}
-      ${stw ? `<div class="hint">Floor-to-ceiling storage cabinets, no countertop or upper split — like a pantry wall. No fixtures on a storage wall; switch back to Countertop to add a sink, range, etc.</div>` : `
+      ${stw ? `
+      <div class="fld"><label>Cabinet style</label><select class="stgStyle" data-wall="${i}">
+        ${[['doors','Doors'],['drawers','Drawers below, doors above'],['open','Open shelving'],['glass','Glass-front uppers']]
+          .map(([k,name])=>`<option value="${k}" ${(r.storageStyle&&r.storageStyle[i]||'doors')===k?'selected':''}>${name}</option>`).join('')}
+      </select></div>
+      ${r.type==='kitchen' ? `
+      <label class="chk"><input type="checkbox" class="wFix" data-wall="${i}" data-k="fridge" ${r.cfg[i]&&r.cfg[i].fridge?'checked':''}>Refrigerator 36"</label>
+      <label class="chk"><input type="checkbox" class="wFix" data-wall="${i}" data-k="fridgeXL" ${r.cfg[i]&&r.cfg[i].fridgeXL?'checked':''}>Fridge/Freezer (double) 72"</label>` : ''}
+      <div class="hint">Floor-to-ceiling built-in cabinetry — base cabinets topped with wall cabinets, no functional countertop.${r.type==='kitchen'?' A fridge can still go here, flush with the surrounding doors.':' No other fixtures on a storage wall; switch back to Countertop to add a sink, etc.'}</div>` : `
       ${Object.entries(t.fixtures).map(([k,name])=>`<label class="chk"><input type="checkbox" class="wFix" data-wall="${i}" data-k="${k}" ${r.cfg[i]&&r.cfg[i][k]?'checked':''}>${name}</label>`).join('')}
-      ${orderRowsHtml(t, r.cfg[i]||{}, i)}
-      ${ov>0.5?`<div class="hint" style="color:var(--dim);font-weight:600">⚠ These fixtures need ~${fmt(Number(r.walls[i])+ov)}" — wall is only ${fmt(r.walls[i])}". Uncheck a fixture, add a linen/tall elsewhere, or lengthen this wall.</div>`:''}`}
+      ${orderRowsHtml(t, r.cfg[i]||{}, i)}`}
+      ${ov>0.5?`<div class="hint" style="color:var(--dim);font-weight:600">⚠ These fixtures need ~${fmt(Number(r.walls[i])+ov)}" — wall is only ${fmt(r.walls[i])}". Uncheck a fixture, add a linen/tall elsewhere, or lengthen this wall.</div>`:''}
     </div>`;
     }).join('')}
   </div>
@@ -1693,8 +1769,11 @@ function buildSidebar(){
   side.querySelectorAll('.wMode').forEach(b=>b.addEventListener('click',()=>{
     const on = b.dataset.stw==='1';
     r.storageWall=r.storageWall||{}; r.storageWall[b.dataset.wall]=on;
-    if(on) r.cfg[b.dataset.wall]={}; /* storage wall has no fixtures — drop any that were set */
+    if(on) r.cfg[b.dataset.wall]={}; /* switching to storage — drop sink/range/etc, start fresh (fridge can be re-checked) */
     buildSidebar(); render();
+  }));
+  side.querySelectorAll('.stgStyle').forEach(el=>el.addEventListener('change',()=>{
+    r.storageStyle=r.storageStyle||{}; r.storageStyle[el.dataset.wall]=el.value; render();
   }));
   side.querySelectorAll('.ordBtn').forEach(b=>b.addEventListener('click',()=>{
     const cfgObj=r.cfg[b.dataset.wall]||(r.cfg[b.dataset.wall]={});
