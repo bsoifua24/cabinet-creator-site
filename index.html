@@ -1029,17 +1029,23 @@ function draw3D(){
       if(edges){const e=edge(geo);e.position.copy(m.position);e.rotation.copy(m.rotation);g.add(e);}
       return m;
     }
-    function placeHandle(w,h,t,yC,frontOff){ /* hardware — drawn regardless of door
-      style (even a slab door gets a handle), proud of the door face so it reads
-      as real hardware rather than a shading difference */
+    function placeHandle(w,h,t,yC,frontOff,left,bottom){ /* hardware — drawn regardless
+      of door style (even a slab door gets a handle), proud of the door face so it
+      reads as real hardware rather than a shading difference. left: put it on the
+      panel's left edge instead of the right (the two doors of a double-wide
+      fridge/freezer both reach for the shared center divider, not opposite outer
+      edges). bottom: put it near the panel's bottom instead of the top (a wall
+      cabinet's hardware needs to be reachable from below, opposite a base cabinet). */
       if(!r.fin.handle || w<5) return;
-      const m = handleMul, hx = t+w-Math.min(4.5,w*.18), hy = yC+h*.24, hOff = frontOff+1.9;
+      const m = handleMul, hx = left ? t+Math.min(4.5,w*.18) : t+w-Math.min(4.5,w*.18),
+        hy = bottom ? yC-h*.24 : yC+h*.24, hOff = frontOff+1.9;
       if(r.fin.handle===1) put(.55,4.5*m,.55, hx,hy,hOff, mHandle, false); /* bar pull */
       else if(r.fin.handle===2) put(1.1*m,1.1*m,1.1*m, hx-.55*m,hy,hOff, mHandle, false); /* knob */
       else put(2.6*m,.55,.55, hx-2.6*m,hy,hOff, mHandle, false); /* cup pull */
     }
-    function doorFace(w,h,t,yC,frontOff){ /* panel-style detail on the door face — edges on so the
-      style reads clearly regardless of lighting angle, not just from a subtle shading difference */
+    function doorFace(w,h,t,yC,frontOff,handleLeft,handleBottom){ /* panel-style detail
+      on the door face — edges on so the style reads clearly regardless of lighting
+      angle, not just from a subtle shading difference */
       if(r.fin.door!==0){ /* slab: flat door, no panel detail — still gets a handle below */
         const inset=Math.min(3,w*.14), pw=w-2*inset, ph=h-2*inset;
         if(pw>=3 && ph>=3){
@@ -1052,7 +1058,7 @@ function draw3D(){
           }
         }
       }
-      placeHandle(w,h,t,yC,frontOff);
+      placeHandle(w,h,t,yC,frontOff,handleLeft,handleBottom);
     }
     {const geo=new THREE.BoxGeometry(lay.L,ceil,5);const m=new THREE.Mesh(geo,mWall);
      const [px,pz]=pos(lay.L/2,-2.5); m.position.set(px,ceil/2,pz); m.rotation.y=rotY; m.receiveShadow=true; g.add(m);}
@@ -1069,9 +1075,9 @@ function draw3D(){
           if(isXL){ /* double-wide: two separate door panels split by a visible
             center divider, so it reads as fridge on one side, freezer on the other */
             const half=fw/2-.75, rightT=midX+.75;
-            doorFace(half-3,FR_H-6,fx+1.5,FR_H/2,bd);
-            doorFace(half-3,FR_H-6,rightT+1.5,FR_H/2,bd);
-            if(ph){ doorFace(half-3,ph-3,fx+1.5,FR_H+ph/2,bd); doorFace(half-3,ph-3,rightT+1.5,FR_H+ph/2,bd); }
+            doorFace(half-3,FR_H-6,fx+1.5,FR_H/2,bd); /* left door: handle on its right edge — at the divider */
+            doorFace(half-3,FR_H-6,rightT+1.5,FR_H/2,bd,true); /* right door: handle on its left edge — also at the divider */
+            if(ph){ doorFace(half-3,ph-3,fx+1.5,FR_H+ph/2,bd); doorFace(half-3,ph-3,rightT+1.5,FR_H+ph/2,bd,true); }
             put(1,FR_H+ph-6,bd-2,midX-.5,(FR_H+ph)/2,1,mTrim,false);
           } else {
             doorFace(fw-3,FR_H-6,fx+1.5,FR_H/2,bd);
@@ -1147,7 +1153,8 @@ function draw3D(){
       if(u.h<=0)continue;
       const d=u.type==='overRef'?24:ud;
       put(u.w-.5,u.h,d,u.x+.25,u.bottom+u.h/2,0, u.glass?mGlass:(u.type==='fillerU'?mCabD:mCab));
-      if(u.type!=='fillerU'&&!u.open&&!u.glass) doorFace(u.w-.5,u.h-3,u.x+.25,u.bottom+u.h/2,d);
+      if(u.type!=='fillerU'&&!u.open&&!u.glass) doorFace(u.w-.5,u.h-3,u.x+.25,u.bottom+u.h/2,d,false,true); /* wall
+        cabinet — hardware near the bottom edge, reachable from the floor, opposite a base cabinet's top-edge convention */
     }
     /* granite accent — a stone-textured strip filling the reveal gap between
        a storage wall's lower and upper bands. Segmented the same way the
@@ -1179,16 +1186,17 @@ function draw3D(){
     /* doors face the walkway side (off≈0, toward the main wall/range) — the
        OPPOSITE convention from a wall run's doorFace, since here the "away
        from the wall" direction is negative off, not positive */
-    function placeHandle2(w,h,t,yC,frontOff){ /* mirrors placeHandle — the island's
+    function placeHandle2(w,h,t,yC,frontOff,left){ /* mirrors placeHandle — the island's
       door-facing side is the OPPOSITE direction (negative off), so the handle
       stands off the face toward frontOff-1.2, not +1.2 */
       if(!r.fin.handle || w<5) return;
-      const m = handleMul, hx = t+w-Math.min(4.5,w*.18), hy = yC+h*.24, hOff = frontOff-1.9;
+      const m = handleMul, hx = left ? t+Math.min(4.5,w*.18) : t+w-Math.min(4.5,w*.18),
+        hy = yC+h*.24, hOff = frontOff-1.9;
       if(r.fin.handle===1) put2(.55,4.5*m,.55, hx,hy,hOff, mHandle, false);
       else if(r.fin.handle===2) put2(1.1*m,1.1*m,1.1*m, hx-.55*m,hy,hOff, mHandle, false);
       else put2(2.6*m,.55,.55, hx-2.6*m,hy,hOff, mHandle, false);
     }
-    function doorFace2(w,h,t,yC,frontOff){
+    function doorFace2(w,h,t,yC,frontOff,handleLeft){
       if(r.fin.door!==0){
         const inset=Math.min(3,w*.14), pw=w-2*inset, ph=h-2*inset;
         if(pw>=3 && ph>=3){
@@ -1199,7 +1207,7 @@ function draw3D(){
           } else put2(pw,ph,.8,t+inset,yC,frontOff+.9,mCabD,true);
         }
       }
-      placeHandle2(w,h,t,yC,frontOff);
+      placeHandle2(w,h,t,yC,frontOff,handleLeft);
     }
     const itoe=r.toe, ibh=(ih-r.ctT)-itoe; /* cabinet body stops short of the finished
       counter height by the countertop's own thickness, same as a wall run's baseH —
@@ -1215,7 +1223,7 @@ function draw3D(){
           if(isXL){
             const half=fw/2-.75, rightT=midX+.75;
             doorFace2(half-3,FR_H-6,fx+1.5,FR_H/2,0);
-            doorFace2(half-3,FR_H-6,rightT+1.5,FR_H/2,0);
+            doorFace2(half-3,FR_H-6,rightT+1.5,FR_H/2,0,true);
             put2(1,FR_H-6,idp-2,midX-.5,FR_H/2,1,mTrim,false);
           } else doorFace2(fw-3,FR_H-6,fx+1.5,FR_H/2,0);
         } else if(isXL){
