@@ -1570,10 +1570,19 @@ function ensureEagleDragListeners(){
       if(eagleSplitLine){ eagleSplitLine.b=norm; vp.paint(); }
     }
   });
-  window.addEventListener('mouseup',()=>{
+  window.addEventListener('mouseup',e=>{
     if(!eagleDrag) return;
     const type=eagleDrag.type;
-    if(type==='pan') eagleDrag.cv.style.cursor='grab';
+    if(type==='pan'){
+      eagleDrag.cv.style.cursor='grab';
+      /* a plain click (barely any movement between mousedown and mouseup) on a
+         room jumps straight into it — Phase 4's "clicking a room jumps to it".
+         A real pan drag is left alone; only a near-stationary click triggers this. */
+      if(eagleDrag.pageEntry && eagleDrag.startNorm && Math.hypot(e.clientX-eagleDrag.sx,e.clientY-eagleDrag.sy)<6){
+        const hit=eagleRoomAt(eagleDrag.pageEntry, eagleDrag.startNorm);
+        if(hit){ state.active=hit.i; rebuildAll(); const t=document.querySelector('.tab[data-v="vplan"]'); if(t) t.click(); }
+      }
+    }
     if(type==='rectdraw'){
       if(eagleDrawing && eagleDrawing.type==='rect' && eagleDrawing.start && eagleDrawing.cur){
         const [x0,y0]=eagleDrawing.start, [x1,y1]=eagleDrawing.cur;
@@ -1634,6 +1643,7 @@ function finishPolyDraw(pnum, pts){
 function bboxToPoly(bbox){ const [x0,y0,x1,y1]=bbox; return [[x0,y0],[x1,y0],[x1,y1],[x0,y1]]; }
 function polyOf(r){ if(!r.source) return null; return (Array.isArray(r.source.poly)&&r.source.poly.length>=3) ? r.source.poly : bboxToPoly(r.source.bbox); }
 function polyBBoxOf(poly){ const xs=poly.map(p=>p[0]), ys=poly.map(p=>p[1]); return [Math.min(...xs),Math.min(...ys),Math.max(...xs),Math.max(...ys)]; }
+function polyCentroid(poly){ let sx=0,sy=0; for(const p of poly){ sx+=p[0]; sy+=p[1]; } return [sx/poly.length, sy/poly.length]; }
 function setRoomBoundary(r, poly){ r.source=Object.assign({}, r.source, {poly, bbox:polyBBoxOf(poly), manual:true}); }
 function pointInPoly(pt, poly){
   let inside=false;
@@ -1755,7 +1765,8 @@ function initEagleMapCanvas(cv, pageEntry, pnum){
       ctx.fill();
       ctx.lineWidth=isSel?3:2.5; ctx.strokeStyle=col; ctx.stroke();
       ctx.restore();
-      const [bx,by]=pxPts[0], rad=15, cx2=bx+rad+4, cy2=by+rad+4;
+      const [cx2,cy2]=toPx(polyCentroid(poly)), rad=15; /* badge sits at the room's
+        centroid, inside the shape — not pinned to a corner */
       ctx.save();
       ctx.beginPath(); ctx.arc(cx2,cy2,rad,0,Math.PI*2); ctx.fillStyle=col; ctx.fill();
       ctx.lineWidth=2; ctx.strokeStyle='#fff'; ctx.stroke();
@@ -1811,7 +1822,8 @@ function initEagleMapCanvas(cv, pageEntry, pnum){
     if(!vp.img) return;
     const [norm,px]=eagleEvtNorm(cv,vp,e);
     if(eagleTool==='select'){
-      eagleDrag={type:'pan',vp,cv,lx:e.clientX,ly:e.clientY}; cv.style.cursor='grabbing'; return;
+      eagleDrag={type:'pan',vp,cv,lx:e.clientX,ly:e.clientY,sx:e.clientX,sy:e.clientY,pageEntry,startNorm:norm};
+      cv.style.cursor='grabbing'; return;
     }
     if(eagleTool==='rect'){
       eagleDrawing={pnum,type:'rect',start:norm,cur:norm};
@@ -1928,6 +1940,52 @@ function queueMarkDone(){
   if(next){ next.r.status='active'; state.active=next.i; }
   rebuildAll();
 }
+/* ---- PHASE 4b: Approval Mode — the plan dimmed everywhere except a
+   cutout over exactly the active room, so review is one room at a time
+   with zero risk of mixing up which box belongs to which room. Reuses
+   the same eagleVP viewport (keyed by page) as Map mode, so switching
+   between the two on the same page keeps your zoom/pan. */
+function initApprovalCanvas(cv, pnum, activeRoom, imgSrc){
+  const vp = eagleVP[pnum] || (eagleVP[pnum]={zoom:1,panX:0,panY:0,img:null});
+  const ctx=cv.getContext('2d'), cvW=cv.width, cvH=cv.height;
+  function paint(){
+    const img=vp.img; if(!img) return;
+    ctx.clearRect(0,0,cvW,cvH);
+    const {ox,oy,dw,dh}=eagleXform(cv,vp);
+    ctx.drawImage(img,ox,oy,dw,dh);
+    const poly=polyOf(activeRoom);
+    if(poly){
+      const toPx=p=>[ox+p[0]*dw, oy+p[1]*dh], pxPts=poly.map(toPx);
+      ctx.save();
+      ctx.fillStyle='rgba(16,20,26,.62)'; /* dim the whole plan first... */
+      ctx.fillRect(0,0,cvW,cvH);
+      ctx.beginPath(); pxPts.forEach((p,k)=>k===0?ctx.moveTo(p[0],p[1]):ctx.lineTo(p[0],p[1])); ctx.closePath();
+      ctx.save(); ctx.clip(); ctx.drawImage(img,ox,oy,dw,dh); ctx.restore(); /* ...then redraw the
+        image at full brightness clipped to just the active room, cutting a hole in the dim layer */
+      ctx.lineWidth=4; ctx.strokeStyle='#2f6fd1'; ctx.stroke(); /* strong accent outline */
+      ctx.restore();
+    }
+  }
+  vp.paint=paint;
+  if(vp.img) paint();
+  else { const im=new Image(); im.onload=()=>{ vp.img=im; paint(); }; im.src=imgSrc; }
+  cv.style.cursor='grab';
+  cv.addEventListener('wheel',e=>{
+    e.preventDefault(); if(!vp.img) return;
+    const b=cv.getBoundingClientRect();
+    const mx=(e.clientX-b.left)*(cvW/b.width), my=(e.clientY-b.top)*(cvH/b.height);
+    const fitScale=Math.min(cvW/vp.img.width, cvH/vp.img.height), oldEff=fitScale*vp.zoom;
+    const oldOx=(cvW-vp.img.width*oldEff)/2+vp.panX, oldOy=(cvH-vp.img.height*oldEff)/2+vp.panY;
+    const ix=(mx-oldOx)/oldEff, iy=(my-oldOy)/oldEff;
+    vp.zoom=Math.max(1,Math.min(8,vp.zoom*(1-e.deltaY*.0015)));
+    const newEff=fitScale*vp.zoom;
+    vp.panX=mx-ix*newEff-(cvW-vp.img.width*newEff)/2;
+    vp.panY=my-iy*newEff-(cvH-vp.img.height*newEff)/2;
+    paint();
+  },{passive:false});
+  cv.addEventListener('mousedown',e=>{ eagleDrag={type:'pan',vp,cv,lx:e.clientX,ly:e.clientY}; cv.style.cursor='grabbing'; });
+  ensureEagleDragListeners();
+}
 function drawEagleEye(){
   const wrap=$('eagleWrap'); if(!wrap) return;
   const byPage={};
@@ -1941,14 +1999,15 @@ function drawEagleEye(){
 
   const aiDetectedCount = state.rooms.filter(r=>r.source && !r.source.manual).length;
   let html=`<div style="display:flex;align-items:center;gap:14px;margin-bottom:14px;flex-wrap:wrap">
-    <div class="segs" style="max-width:320px">
+    <div class="segs" style="max-width:420px">
       <button class="eagleModeBtn ${eagleMode==='list'?'on':''}" data-m="list">List</button>
       <button class="eagleModeBtn ${eagleMode==='map'?'on':''}" data-m="map">Map</button>
       <button class="eagleModeBtn ${eagleMode==='queue'?'on':''}" data-m="queue">Queue</button>
+      <button class="eagleModeBtn ${eagleMode==='approval'?'on':''}" data-m="approval">Approval</button>
     </div>
     ${aiDetectedCount ? `<button id="eagleClearAI" class="ghost" style="padding:6px 12px;font-size:11px">Clear ${aiDetectedCount} AI-detected room${aiDetectedCount===1?'':'s'} — keep blueprints blank</button>` : ''}
   </div>`;
-  if(!pageNums.length && !others.length && eagleMode!=='queue'){
+  if(!pageNums.length && !others.length && eagleMode!=='queue' && eagleMode!=='approval'){
     html+='<div class="sheetbox" style="padding:16px"><p class="hint">No rooms yet — run "Analyze plans" on the Import page, or add a room by hand with the "+ Add room…" menu above.</p></div>';
   }
   if(eagleMode==='map'){
@@ -2020,6 +2079,26 @@ function drawEagleEye(){
         </div>`;
       }
     }
+  } else if(eagleMode==='approval'){
+    ensureQueueActive();
+    const q=roomQueue(), activeEntry=q.find(({r})=>r.status==='active');
+    if(!activeEntry){
+      html+='<div class="sheetbox" style="padding:16px"><p class="hint">No active room to review — the queue is either empty or every room is already done. Check the Queue tab.</p></div>';
+    } else if(!activeEntry.r.source){
+      html+=`<div class="sheetbox" style="padding:16px"><p class="hint">"${activeEntry.r.name}" isn't tied to a blueprint page (it was added without a boundary), so there's nothing to dim/highlight here — open it from the Queue tab instead.</p></div>`;
+    } else {
+      const {r}=activeEntry, qi=q.findIndex(({r:qr})=>qr===r);
+      const cat=ROOM_CATEGORIES[r.category]||ROOM_CATEGORIES.other;
+      html+=`<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:10px">
+        <p class="hint" style="margin:0"><b style="color:var(--ink)">#${qi+1} ${r.name}</b> — ${cat.label} · page ${r.source.page}</p>
+        <div class="segs" style="max-width:200px">
+          <button id="approvalPrev">← Prev</button>
+          <button id="approvalNext">Next →</button>
+        </div>
+      </div>
+      <div class="sheetbox" style="margin-bottom:14px"><canvas class="draw" id="cvApproval" width="1600" height="1200"></canvas></div>
+      <button class="primary" id="approvalDoneBtn" style="width:100%;padding:12px;font-size:13px">Mark "${r.name}" done — next room →</button>`;
+    }
   } else {
     for(const pnum of pageNums){
       html+=`<div class="sheetbox" style="margin-bottom:12px"><span class="stamp">Page ${pnum}</span><canvas class="draw" data-page="${pnum}" width="1600" height="1200"></canvas></div>`;
@@ -2054,6 +2133,15 @@ function drawEagleEye(){
   const qdb=wrap.querySelector('#queueDoneBtn'); if(qdb) qdb.addEventListener('click', queueMarkDone);
   const qxc=wrap.querySelector('#queueExportCsv'); if(qxc) qxc.addEventListener('click', csv);
   const qpa=wrap.querySelector('#queuePrintAll'); if(qpa) qpa.addEventListener('click', ()=>$('btnPrint').click());
+  const apPrev=wrap.querySelector('#approvalPrev'); if(apPrev) apPrev.addEventListener('click',()=>{
+    const q=roomQueue(), idx=q.findIndex(({r})=>r.status==='active');
+    if(q.length) queueJumpTo(idx>0 ? q[idx-1].i : q[q.length-1].i);
+  });
+  const apNext=wrap.querySelector('#approvalNext'); if(apNext) apNext.addEventListener('click',()=>{
+    const q=roomQueue(), idx=q.findIndex(({r})=>r.status==='active');
+    if(q.length) queueJumpTo(idx>=0 && idx<q.length-1 ? q[idx+1].i : q[0].i);
+  });
+  const apDone=wrap.querySelector('#approvalDoneBtn'); if(apDone) apDone.addEventListener('click', queueMarkDone);
 
   if(eagleMode==='map'){
     for(const pnum of pageNums){
@@ -2067,6 +2155,13 @@ function drawEagleEye(){
         cv.width=annotated.width; cv.height=annotated.height;
         cv.getContext('2d').drawImage(annotated,0,0);
       });
+    }
+  } else if(eagleMode==='approval'){
+    const q=roomQueue(), activeEntry=q.find(({r})=>r.status==='active');
+    const cv=wrap.querySelector('#cvApproval');
+    if(cv && activeEntry && activeEntry.r.source){
+      const sp=(state.sourcePages||[]).find(s=>s.page===activeEntry.r.source.page);
+      if(sp) initApprovalCanvas(cv, activeEntry.r.source.page, activeEntry.r, sp.img);
     }
   }
 
