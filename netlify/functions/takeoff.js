@@ -17,7 +17,7 @@ Respond with ONLY valid JSON, no markdown fences, no commentary, in exactly this
   "notes":"anything ambiguous, including any floating/open shelving shown that doesn't fit a fixture slot below"}
 ]}
 Rules:
-- type is one of: kitchen, bath, laundry, closet — pick the nearest fit for non-standard spaces (wet bar/butler's pantry → kitchen, mudroom/pantry/office built-ins/media wall → closet, powder room → bath).
+- type is one of: kitchen, bath, laundry, closet — pick the nearest fit for non-standard spaces. A space with countertop/base-cabinet symbols — a wet bar, butler's pantry, prep kitchen, prep pantry, or scullery — is "kitchen" even if it's small or has no range/fridge, AS LONG AS you can actually see counter/cabinet runs (a double-ruled rectangle with a door-swing or drawer marks) on the plan; don't default a room to "kitchen" just because its label says "prep" or "pantry". A storage-only space with no counter and no plumbing — a plain shelving pantry, mudroom lockers, linen, office built-ins, a media wall — is "closet". Powder room → bath.
 - shape is one of: single, L, galley, U. Wall A first; for L, A is the longer leg; for U, B is the back wall.
 - All wall lengths in INCHES along the face that receives cabinets. Omit or set 0 for unused walls.
 - fixtures keys by room type — kitchen: sink, dw, range, fridge, fridgeXL, trash, spice, ice, window · bath: vanity, vanity2, linen, toilet · laundry: washer, dryer, sink, tall · closet: drawers, shelves, rods.
