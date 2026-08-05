@@ -466,8 +466,61 @@ function buildFixed(cfg, defs, orderable){
   const finalOrder = [...order.filter(k=>checked.includes(k)), ...checked.filter(k=>!order.includes(k))];
   return finalOrder.map(k=>({...defs[k]}));
 }
+/* catalog of items a user can drop into a Manual-layout wall — same code/
+   width conventions as the algorithmic engine above (buildFixed's defs,
+   greedyFill's 'B'/'VB' base codes) so a manual item looks and schedules
+   identically to an algorithmic one, just positioned/sized by hand */
+function manualCatalog(r){
+  const cat = [{type:'base', label:r.type==='bath'?'Vanity base':'Base cabinet', codeBase:r.type==='bath'?'VB':'B', w:24}];
+  if(r.type==='kitchen') cat.push(
+    {type:'sink', label:'Sink', codeBase:'SB', w:SINK_W},
+    {type:'dw', label:'Dishwasher', codeBase:'DW', w:DW_W, fixed:true},
+    {type:'range', label:'Range', codeBase:'RANGE', w:RANGE_W, fixed:true},
+    {type:'fridge', label:'Refrigerator', codeBase:'REF', w:FR_W, fixed:true},
+    {type:'fridge', label:'Fridge/Freezer (double)', codeBase:'REF72', w:72, fixed:true},
+    {type:'trash', label:'Trash pullout', codeBase:'TRSH', w:18},
+    {type:'spice', label:'Spice pullout', codeBase:'SPC', w:9},
+    {type:'ice', label:'Ice maker', codeBase:'ICE', w:15},
+    {type:'corner', label:'Corner filler', codeBase:'CR', w:24, fixed:true},
+    {type:'tall', label:'Tall / pantry', codeBase:'T', w:18, tall:TALL_H}
+  );
+  else if(r.type==='bath') cat.push(
+    {type:'sink', label:'Vanity sink', codeBase:'VSB', w:36},
+    {type:'gap', label:'Toilet space', codeBase:'WC', w:TOILET, fixed:true},
+    {type:'trash', label:'Trash pullout', codeBase:'TRSH', w:12},
+    {type:'tall', label:'Linen tower', codeBase:'LIN', w:18, tall:TALL_H},
+    {type:'corner', label:'Corner filler', codeBase:'CR', w:24, fixed:true}
+  );
+  else if(r.type==='laundry') cat.push(
+    {type:'washer', label:'Washer', codeBase:'WASH', w:WD_W, fixed:true},
+    {type:'dryer', label:'Dryer', codeBase:'DRY', w:WD_W, fixed:true},
+    {type:'sink', label:'Utility sink', codeBase:'SB', w:30},
+    {type:'trash', label:'Trash pullout', codeBase:'TRSH', w:12},
+    {type:'tall', label:'Tall storage', codeBase:'T', w:18, tall:TALL_H},
+    {type:'corner', label:'Corner filler', codeBase:'CR', w:24, fixed:true}
+  );
+  return cat;
+}
+function newManualItem(entry, defaultD){
+  const code = entry.fixed ? entry.codeBase : entry.codeBase+Math.round(entry.w);
+  return {key:genId(), type:entry.type, code, label:entry.label, w:entry.w, d:defaultD, tall:entry.tall};
+}
 function layoutWall(r, id){
   const L = Number(r.walls[id])||0, cfg = r.cfg[id]||{}, cr = corners(r,id);
+  if(r.type!=='closet' && cfg.manual && Array.isArray(cfg.manualItems) && cfg.manualItems.length){
+    /* manual layout: the user owns every cabinet in this run directly — no
+       algorithmic fill, no automatic corner filler, exact widths/depths as
+       entered, in whatever order they've arranged. Deliberately does NOT
+       call finish()'s "grow the last item to fill L" adjustment — silently
+       resizing a width the user explicitly typed in would defeat the point
+       of this mode. Overflow/underflow is just surfaced, same warning UI
+       the algorithmic walls already show. */
+    const items2 = cfg.manualItems.map(it=>({...it}));
+    let mx=0; for(const it of items2){ it.x=mx; mx+=it.w; }
+    const uppers2 = ride(items2);
+    const sum2 = items2.reduce((a,b)=>a+b.w,0);
+    return {items:items2, uppers:uppers2, L: Math.max(L, sum2), overflow: Math.max(0, sum2-L)};
+  }
   const items = [];
   const bigW = cr.big && r.type==='kitchen' ? LS : 24;
   let usable = L - (cr.start?bigW:0) - (cr.end?bigW:0);
@@ -769,6 +822,11 @@ function doorDetail(c,x,y,w,h,style,scale){
 }
 
 /* ================= PLAN VIEW ================= */
+/* click/drag-to-reorder support for Manual-layout walls — populated fresh by
+   drawPlan() every render (walls:{id:'H'|'V'}), consumed by the mouse
+   listeners registered once, below, on the fixed #cvPlan canvas element */
+let planHit = {ox:0, oy:0, s:1, walls:{}};
+let planDrag = null;
 function drawPlan(){
   const r = room(), cv=$('cvPlan'), c=ctxSetup(cv);
   const ids = wallIds(r), bd=r.baseD;
@@ -786,6 +844,12 @@ function drawPlan(){
   const pad=130, s=Math.min((cv.width-2*pad)/W,(cv.height-2*pad)/totalH);
   const ox=(cv.width-W*s)/2, oy=(cv.height-totalH*s)/2, X=v=>ox+v*s, Y=v=>oy+v*s;
   const cabF = tint(CABCOL[r.fin.cab].h,.72);
+  /* records where each wall's run lands in canvas space, so a later mouse
+     event on this same canvas can be converted back into "inches along the
+     wall" for click-to-select/drag-to-reorder on Manual-layout walls —
+     drawPlan is the only place that knows the current X()/Y()/s transform,
+     since it's recomputed fresh every render() call */
+  planHit.ox=ox; planHit.oy=oy; planHit.s=s; planHit.walls={};
 
   function decorate(it,x,y,w,h,horiz){
     if(it.type==='sink'){ rect(c,x+w*.2,y+h*.22,w*.6,h*.5,1.5,'#5d6d80');
@@ -799,46 +863,54 @@ function drawPlan(){
     if(it.type==='rod'){ line(c,x+4,y+h*.5,x+w-4,y+h*.5,2,'#5d6d80',[10,6]); }
   }
   function runH(lay,yTop,flip,id){
+    planHit.walls[id]='H';
     const stw=!!(r.storageWall&&r.storageWall[id]);
+    /* a Manual-layout cabinet can carry its own depth (it.d) — each box
+       draws at its real depth, and the counter-edge/upper lines (drawn once
+       per wall, not per cabinet) clear the deepest item so they never cut
+       through a custom cabinet that's deeper than the room's standard bd */
+    const wallD = Math.max(bd, ...lay.items.map(i=>i.d||bd));
     rect(c,X(0),Y(yTop)-(flip?0:6),lay.L*s,6,2,'#1b2a3a','#1b2a3a');
     for(const it of lay.items){
-      const x=X(it.x), w=it.w*s, y=flip?Y(yTop)-bd*s:Y(yTop), h=bd*s;
+      const cd=it.d||bd, x=X(it.x), w=it.w*s, y=flip?Y(yTop)-cd*s:Y(yTop), h=cd*s;
       const fill = ['fridge','range','washer','dryer'].includes(it.type)?'#f3e9e6': it.type==='gap'?'#fff': it.type==='filler'?'#e6ebef': cabF;
       rect(c,x,y,w,h,2,'#1b2a3a', it.type==='gap'?null:fill);
       if(it.type!=='filler'&&it.type!=='gap') fitTxt(c,it.label,x+w/2,y+h/2,w,h,15);
       decorate(it,x,y,w,h,true);
     }
     if(r.type!=='closet'){
-      if(!stw){ const ce=flip?Y(yTop)-(bd+1.5)*s:Y(yTop)+(bd+1.5)*s; line(c,X(0),ce,X(lay.L),ce,1.5,'#8b7c55'); }
+      if(!stw){ const ce=flip?Y(yTop)-(wallD+1.5)*s:Y(yTop)+(wallD+1.5)*s; line(c,X(0),ce,X(lay.L),ce,1.5,'#8b7c55'); }
       if(hasUppers(r)||stw){ const upD2=stw?Math.max(r.upD,12):r.upD;
         const ue=flip?Y(yTop)-upD2*s:Y(yTop)+upD2*s; line(c,X(0),ue,X(lay.L),ue,1.5,'#5d6d80',[8,6]); }
     }
-    if(stw) txt(c,'STORAGE WALL',X(lay.L/2),flip?Y(yTop)-bd*s-14:Y(yTop)+bd*s+14,13,'#5d6d80');
+    if(stw) txt(c,'STORAGE WALL',X(lay.L/2),flip?Y(yTop)-wallD*s-14:Y(yTop)+wallD*s+14,13,'#5d6d80');
     /* per-cabinet width, not just the overall wall total */
     const idimY=flip?Y(yTop)+20:Y(yTop)-20;
     for(const it of lay.items){ if(it.type==='filler') continue;
-      dimH(c,X(it.x),X(it.x+it.w),idimY,fmt(it.w)+'"',9); }
+      dimH(c,X(it.x),X(it.x+it.w),idimY,fmt(it.w)+(it.d&&it.d!==bd?'×'+fmt(it.d):'')+'"',9); }
     dimH(c,X(0),X(lay.L),flip?Y(yTop)+42:Y(yTop)-42,fmt(lay.L)+'"');
   }
   function runV(lay,xSide,rt,id){
+    planHit.walls[id]='V';
     const stw=!!(r.storageWall&&r.storageWall[id]);
+    const wallD = Math.max(bd, ...lay.items.map(i=>i.d||bd));
     rect(c,X(xSide)-(rt?0:6),Y(0),6,lay.L*s,2,'#1b2a3a','#1b2a3a');
     for(const it of lay.items){
-      const y=Y(it.x), h=it.w*s, x=rt?X(xSide)-bd*s:X(xSide), w=bd*s;
+      const cd=it.d||bd, y=Y(it.x), h=it.w*s, x=rt?X(xSide)-cd*s:X(xSide), w=cd*s;
       const fill = ['fridge','range','washer','dryer'].includes(it.type)?'#f3e9e6': it.type==='gap'?'#fff': it.type==='filler'?'#e6ebef': cabF;
       rect(c,x,y,w,h,2,'#1b2a3a', it.type==='gap'?null:fill);
       if(it.type!=='filler'&&it.type!=='gap') fitTxt(c,it.label,x+w/2,y+h/2,w,h,15,'#1b2a3a',rt?-1:1);
       decorate(it,x,y,w,h,false);
     }
     if(r.type!=='closet'){
-      if(!stw){ const ce=rt?X(xSide)-(bd+1.5)*s:X(xSide)+(bd+1.5)*s; line(c,ce,Y(0),ce,Y(lay.L),1.5,'#8b7c55'); }
+      if(!stw){ const ce=rt?X(xSide)-(wallD+1.5)*s:X(xSide)+(wallD+1.5)*s; line(c,ce,Y(0),ce,Y(lay.L),1.5,'#8b7c55'); }
       if(hasUppers(r)||stw){ const upD2=stw?Math.max(r.upD,12):r.upD;
         const ue=rt?X(xSide)-upD2*s:X(xSide)+upD2*s; line(c,ue,Y(0),ue,Y(lay.L),1.5,'#5d6d80',[8,6]); }
     }
-    if(stw){c.save();c.translate(rt?X(xSide)-bd*s-14:X(xSide)+bd*s+14,Y(lay.L/2));c.rotate(rt?-Math.PI/2:Math.PI/2);txt(c,'STORAGE WALL',0,0,13,'#5d6d80');c.restore();}
+    if(stw){c.save();c.translate(rt?X(xSide)-wallD*s-14:X(xSide)+wallD*s+14,Y(lay.L/2));c.rotate(rt?-Math.PI/2:Math.PI/2);txt(c,'STORAGE WALL',0,0,13,'#5d6d80');c.restore();}
     const idimX=rt?X(xSide)+20:X(xSide)-20;
     for(const it of lay.items){ if(it.type==='filler') continue;
-      dimV(c,Y(it.x),Y(it.x+it.w),idimX,fmt(it.w)+'"',9); }
+      dimV(c,Y(it.x),Y(it.x+it.w),idimX,fmt(it.w)+(it.d&&it.d!==bd?'×'+fmt(it.d):'')+'"',9); }
     dimV(c,Y(0),Y(lay.L),rt?X(xSide)+42:X(xSide)-42,fmt(lay.L)+'"');
   }
   if(r.shape==='single') runH(A,0,false,'A');
@@ -850,9 +922,10 @@ function drawPlan(){
      line behind it and no upper-cabinet dashed line (islands don't have
      uppers, pendant lights are the overhead feature instead) */
   if(hasIsland){
+    planHit.walls.ISLAND='H';
     const lay=layoutWall(r,'ISLAND'), rd=r.island.depth, yTop=H+30;
     for(const it of lay.items){
-      const x=X(it.x), w=it.w*s, y=Y(yTop), h=rd*s;
+      const cd=it.d||rd, x=X(it.x), w=it.w*s, y=Y(yTop), h=cd*s;
       const fill = ['fridge','range'].includes(it.type)?'#f3e9e6': it.type==='filler'?'#e6ebef': cabF;
       rect(c,x,y,w,h,2,'#1b2a3a',fill);
       if(it.type!=='filler') fitTxt(c,it.label,x+w/2,y+h/2,w,h,15);
@@ -1173,12 +1246,16 @@ function draw3D(){
           const m=new THREE.Mesh(geo,mAppl); const [px,pz]=pos(it.x+it.w/2, bd/2);
           m.position.set(px,hh,pz); m.rotation.z=(rotY===0)?Math.PI/2:0; m.rotation.x=(rotY===0)?0:Math.PI/2; g.add(m); }
         put(it.w,2,bd,it.x,TALL_H,0,mCab); continue; }
-      /* base cabinet */
+      /* base cabinet — it.d overrides the room's standard depth when a
+         cabinet was custom-sized in Manual layout; the box, its door face,
+         and its toe kick all key off the same cd so the door never falls
+         short of (or overshoots) the actual cabinet body, which is exactly
+         what would expose the inside of a non-standard-depth cabinet */
       const gapB = floatVanity ? r.toe+6 : r.toe;
-      const bh=r.baseH-gapB;
-      put(it.w-.5,bh,bd,it.x+.25,gapB+bh/2,0,it.type==='dw'?mAppl:mCab);
-      if(it.type!=='dw'&&it.type!=='filler'&&it.type!=='corner'&&!it.open) doorFace(it.w-.5,bh-3,it.x+.25,gapB+bh/2,bd);
-      if(r.toe>0 && !floatVanity) put(it.w-6,r.toe,bd-3,it.x+3,r.toe/2,0,mCabD,false);
+      const bh=r.baseH-gapB, cd=it.d||bd;
+      put(it.w-.5,bh,cd,it.x+.25,gapB+bh/2,0,it.type==='dw'?mAppl:mCab);
+      if(it.type!=='dw'&&it.type!=='filler'&&it.type!=='corner'&&!it.open) doorFace(it.w-.5,bh-3,it.x+.25,gapB+bh/2,cd);
+      if(r.toe>0 && !floatVanity) put(it.w-6,r.toe,cd-3,it.x+3,r.toe/2,0,mCabD,false);
     }
     if(r.type!=='closet' && !(r.storageWall&&r.storageWall[id])){
       const cfgId = r.cfg[id]||{};
@@ -1191,29 +1268,33 @@ function draw3D(){
         const sinkItem = cfgId.lowerCounter ? seg.items.find(i=>i.type==='sink') : null;
         const lz0 = sinkItem ? sinkItem.x+sinkItem.w : 0;
         const lzw = sinkItem ? Math.max(0, Math.min(14, seg.t1-lz0)) : 0;
+        /* the slab has to reach past the deepest cabinet under it, not just
+           the room's nominal depth — a Manual-layout cabinet set deeper
+           than bd would otherwise poke out past a too-shallow countertop */
+        const segD = Math.max(bd, ...seg.items.map(i=>i.d||bd))+1.5;
         if(lzw>3){
-          if(lz0>seg.t0) put(lz0-seg.t0,Math.max(1,r.ctT),bd+1.5,seg.t0,counterH(r)-r.ctT/2,0,mTop);
-          put(lzw,Math.max(1,r.ctT),bd+1.5,lz0,counterH(r)-1-r.ctT/2,0,mTop);
-          if(lz0+lzw<seg.t1) put(seg.t1-lz0-lzw,Math.max(1,r.ctT),bd+1.5,lz0+lzw,counterH(r)-r.ctT/2,0,mTop);
+          if(lz0>seg.t0) put(lz0-seg.t0,Math.max(1,r.ctT),segD,seg.t0,counterH(r)-r.ctT/2,0,mTop);
+          put(lzw,Math.max(1,r.ctT),segD,lz0,counterH(r)-1-r.ctT/2,0,mTop);
+          if(lz0+lzw<seg.t1) put(seg.t1-lz0-lzw,Math.max(1,r.ctT),segD,lz0+lzw,counterH(r)-r.ctT/2,0,mTop);
         } else {
-          put(seg.t1-seg.t0,Math.max(1,r.ctT),bd+1.5,seg.t0,counterH(r)-r.ctT/2,0,mTop);
+          put(seg.t1-seg.t0,Math.max(1,r.ctT),segD,seg.t0,counterH(r)-r.ctT/2,0,mTop);
         }
-        for(const i of seg.items) if(i.type==='sink') sinkCut(i);
+        for(const i of seg.items) if(i.type==='sink') sinkCut(i, i.d||bd);
       }
-      function sinkCut(i){
+      function sinkCut(i, sd){
         if(r.type==='kitchen' && r.fin.sink===1){ /* double basin — two side-by-side
           cutouts sharing one center faucet, instead of one wide single basin */
           const bw=i.w*.34, gap=i.w*.05, cx=i.x+i.w*.5;
-          put(bw,1.2,bd*.55,cx-gap/2-bw,counterH(r)+.4,bd*.18,mAppl,false);
-          put(bw,1.2,bd*.55,cx+gap/2,counterH(r)+.4,bd*.18,mAppl,false);
-          put(1,5,1,cx-.5,counterH(r)+2.5,bd*.06,mTrim,false);
-          put(3.2,1,1,cx-1.6,counterH(r)+5,bd*.13,mTrim,false);
+          put(bw,1.2,sd*.55,cx-gap/2-bw,counterH(r)+.4,sd*.18,mAppl,false);
+          put(bw,1.2,sd*.55,cx+gap/2,counterH(r)+.4,sd*.18,mAppl,false);
+          put(1,5,1,cx-.5,counterH(r)+2.5,sd*.06,mTrim,false);
+          put(3.2,1,1,cx-1.6,counterH(r)+5,sd*.13,mTrim,false);
         } else {
-          put(i.w*.6,1.2,bd*.55,i.x+i.w*.2,counterH(r)+.4,bd*.18,mAppl,false);
-          put(1,5,1,i.x+i.w*.47,counterH(r)+2.5,bd*.06,mTrim,false);  /* faucet riser — at the back, against the wall/backsplash */
-          put(3.2,1,1,i.x+i.w*.44,counterH(r)+5,bd*.13,mTrim,false);  /* faucet spout, arcing slightly forward over the basin */
+          put(i.w*.6,1.2,sd*.55,i.x+i.w*.2,counterH(r)+.4,sd*.18,mAppl,false);
+          put(1,5,1,i.x+i.w*.47,counterH(r)+2.5,sd*.06,mTrim,false);  /* faucet riser — at the back, against the wall/backsplash */
+          put(3.2,1,1,i.x+i.w*.44,counterH(r)+5,sd*.13,mTrim,false);  /* faucet spout, arcing slightly forward over the basin */
         }
-        if(r.type==='bath'&&r.fin.sink===1) put(i.w*.42,4,i.w*.42>bd*.5?bd*.5:i.w*.42,i.x+i.w*.29,counterH(r)+2,bd*.22,mAppl,false);
+        if(r.type==='bath'&&r.fin.sink===1) put(i.w*.42,4,i.w*.42>sd*.5?sd*.5:i.w*.42,i.x+i.w*.29,counterH(r)+2,sd*.22,mAppl,false);
       }
     }
     for(const u of (lay.uppers||[])){
@@ -1402,8 +1483,12 @@ function buildSchedule(r){
     for(const it of lay.items){
       if(['range','fridge','dw','corner','filler','gap','washer','dryer','rod'].includes(it.type)) continue;
       const tall=it.type==='tall'||it.type==='tower';
-      const h=tall?it.tall:(id==='ISLAND'?r.island.height-r.toe:r.baseH), d=id==='ISLAND'?r.island.depth:r.baseD, k=it.code;
-      rows[k]=rows[k]||{code:k,kind:tall?'Tall':'Base',w:it.w,h,d,qty:0,walls:new Set()};
+      const h=tall?it.tall:(id==='ISLAND'?r.island.height-r.toe:r.baseH), d=it.d||(id==='ISLAND'?r.island.depth:r.baseD);
+      /* keyed by code+dimensions, not just code — a Manual-layout cabinet
+         can share a code with a standard-depth one elsewhere but have a
+         different custom depth, and each needs its own schedule row */
+      const k=it.code+'|'+it.w+'|'+h+'|'+d;
+      rows[k]=rows[k]||{code:it.code,kind:tall?'Tall':'Base',w:it.w,h,d,qty:0,walls:new Set()};
       rows[k].qty++; rows[k].walls.add(id);
       if(tall) tallN++; else baseLF+=it.w;
     }
@@ -2586,12 +2671,32 @@ function buildSidebar(){
   <div class="sect"><h3>Fixtures per wall</h3>
     ${ids.map(i=>{
       const ov = layoutWall(r,i).overflow, stw = r.type!=='closet' && !!(r.storageWall&&r.storageWall[i]);
+      const man = r.type!=='closet' && !!(r.cfg[i]&&r.cfg[i].manual);
+      const mode = man?'manual':stw?'storage':'counter';
       return `<div class="wallcard"><h4>WALL ${i}</h4>
       ${r.type!=='closet' ? `<div class="segs" style="margin-bottom:10px">
-        <button class="wMode ${!stw?'on':''}" data-wall="${i}" data-stw="0">Countertop</button>
-        <button class="wMode ${stw?'on':''}" data-wall="${i}" data-stw="1">Storage wall</button>
+        <button class="wMode ${mode==='counter'?'on':''}" data-wall="${i}" data-mode="counter">Countertop</button>
+        <button class="wMode ${mode==='storage'?'on':''}" data-wall="${i}" data-mode="storage">Storage wall</button>
+        <button class="wMode ${mode==='manual'?'on':''}" data-wall="${i}" data-mode="manual">Manual</button>
       </div>` : ''}
-      ${stw ? `
+      ${man ? `
+      <div class="hint">You control every cabinet on this wall directly — add each one, drag ⠿ to reorder, and set its own exact width and depth. Nothing here fills or resizes automatically.</div>
+      ${(r.cfg[i].manualItems||[]).length ? `<div style="display:flex;gap:6px;padding:2px 0 4px;font:600 10px var(--sans);color:var(--dim)">
+        <span style="width:16px"></span><span style="flex:1">ITEM</span><span style="width:52px">W (in)</span><span style="width:52px">D (in)</span><span style="width:22px"></span>
+      </div>` : ''}
+      ${(r.cfg[i].manualItems||[]).map((it,idx)=>`
+        <div class="manualItem" draggable="true" data-wall="${i}" data-idx="${idx}" style="display:flex;align-items:center;gap:6px;padding:4px 0;border-bottom:1px solid var(--line)">
+          <span style="cursor:grab;color:var(--dim)">⠿</span>
+          <input class="miLabel" data-wall="${i}" data-idx="${idx}" value="${it.label}" style="flex:1;min-width:0">
+          <input class="miW" type="number" step="0.5" min="1" data-wall="${i}" data-idx="${idx}" value="${it.w}" style="width:52px">
+          <input class="miD" type="number" step="0.5" min="1" data-wall="${i}" data-idx="${idx}" value="${it.d||r.baseD}" style="width:52px">
+          <button class="miDel" data-wall="${i}" data-idx="${idx}" title="Remove" style="padding:2px 7px">✕</button>
+        </div>`).join('')}
+      <div class="fld" style="margin-top:8px"><label>Add to this wall</label><select class="miAdd" data-wall="${i}">
+        <option value="">+ choose an item…</option>
+        ${manualCatalog(r).map((cent,ci)=>`<option value="${ci}">${cent.label} (${cent.w}")</option>`).join('')}
+      </select></div>
+      ` : stw ? `
       <div class="fld"><label>Cabinet style</label><select class="stgStyle" data-wall="${i}">
         ${[['doors','Doors'],['drawers','Drawers below, doors above'],['open','Open shelving'],['glass','Glass-front uppers']]
           .map(([k,name])=>`<option value="${k}" ${(r.storageStyle&&r.storageStyle[i]||'doors')===k?'selected':''}>${name}</option>`).join('')}
@@ -2613,7 +2718,7 @@ function buildSidebar(){
       ${Object.keys(t.fixtures).some(k=>r.cfg[i]&&r.cfg[i][k]) ? edgeFlushHtml(r.cfg[i]||{}, i) : ''}
       ${['sink','vanity','vanity2'].some(k=>r.cfg[i]&&r.cfg[i][k]) ? `<label class="chk"><input type="checkbox" class="lowerCounter" data-wall="${i}" ${r.cfg[i]&&r.cfg[i].lowerCounter?'checked':''}>Lowered counter next to sink (keeps water off the main surface)</label>` : ''}
       ${hasUppers(r) ? `<label class="chk"><input type="checkbox" class="upGlass" data-wall="${i}" ${r.cfg[i]&&r.cfg[i].upperGlass?'checked':''}>Glass-front upper cabinets</label>` : ''}`}
-      ${ov>0.5?`<div class="hint" style="color:var(--dim);font-weight:600">⚠ These fixtures need ~${fmt(Number(r.walls[i])+ov)}" — wall is only ${fmt(r.walls[i])}". Uncheck a fixture, add a linen/tall elsewhere, or lengthen this wall.</div>`:''}
+      ${ov>0.5?`<div class="hint" style="color:var(--dim);font-weight:600">⚠ These items need ~${fmt(Number(r.walls[i])+ov)}" — wall is only ${fmt(r.walls[i])}". Remove/shrink an item${man?'':', add a linen/tall elsewhere,'} or lengthen this wall.</div>`:''}
     </div>`;
     }).join('')}
   </div>
@@ -2639,9 +2744,33 @@ function buildSidebar(){
       <label class="chk"><input type="checkbox" id="islPendant" ${r.island.pendant?'checked':''}>Decorative pendant lights</label>
       ${r.island.pendant?`<div class="fld"><label>Pendant count</label><input type="number" min="1" max="6" id="islPendantN" value="${r.island.pendantCount}"></div>`:''}
       <div class="wallcard" style="margin-top:10px"><h4>ISLAND FIXTURES</h4>
+        ${(()=>{ const iman = !!(r.cfg.ISLAND&&r.cfg.ISLAND.manual); return `
+        <div class="segs" style="margin-bottom:10px">
+          <button class="wMode ${!iman?'on':''}" data-wall="ISLAND" data-mode="counter">Automatic</button>
+          <button class="wMode ${iman?'on':''}" data-wall="ISLAND" data-mode="manual">Manual</button>
+        </div>
+        ${iman ? `
+        <div class="hint">Add each island item by hand, drag ⠿ to reorder, and set its own width and depth.</div>
+        ${(r.cfg.ISLAND.manualItems||[]).length ? `<div style="display:flex;gap:6px;padding:2px 0 4px;font:600 10px var(--sans);color:var(--dim)">
+          <span style="width:16px"></span><span style="flex:1">ITEM</span><span style="width:52px">W (in)</span><span style="width:52px">D (in)</span><span style="width:22px"></span>
+        </div>` : ''}
+        ${(r.cfg.ISLAND.manualItems||[]).map((it,idx)=>`
+          <div class="manualItem" draggable="true" data-wall="ISLAND" data-idx="${idx}" style="display:flex;align-items:center;gap:6px;padding:4px 0;border-bottom:1px solid var(--line)">
+            <span style="cursor:grab;color:var(--dim)">⠿</span>
+            <input class="miLabel" data-wall="ISLAND" data-idx="${idx}" value="${it.label}" style="flex:1;min-width:0">
+            <input class="miW" type="number" step="0.5" min="1" data-wall="ISLAND" data-idx="${idx}" value="${it.w}" style="width:52px">
+            <input class="miD" type="number" step="0.5" min="1" data-wall="ISLAND" data-idx="${idx}" value="${it.d||r.island.depth}" style="width:52px">
+            <button class="miDel" data-wall="ISLAND" data-idx="${idx}" title="Remove" style="padding:2px 7px">✕</button>
+          </div>`).join('')}
+        <div class="fld" style="margin-top:8px"><label>Add to island</label><select class="miAdd" data-wall="ISLAND">
+          <option value="">+ choose an item…</option>
+          ${manualCatalog(r).map((cent,ci)=>`<option value="${ci}">${cent.label} (${cent.w}")</option>`).join('')}
+        </select></div>
+        ` : `
         ${Object.entries(t.fixtures).filter(([k])=>k!=='window').map(([k,name])=>`<label class="chk"><input type="checkbox" class="wFix" data-wall="ISLAND" data-k="${k}" ${r.cfg.ISLAND&&r.cfg.ISLAND[k]?'checked':''}>${name}</label>`).join('')}
-        ${orderRowsHtml(t, r.cfg.ISLAND||{}, 'ISLAND')}
-        ${iov>0.5?`<div class="hint" style="color:var(--dim);font-weight:600">⚠ These fixtures need ~${fmt(Number(r.walls.ISLAND)+iov)}" — island is only ${fmt(r.walls.ISLAND)}" long. Uncheck a fixture or lengthen the island.</div>`:''}
+        ${orderRowsHtml(t, r.cfg.ISLAND||{}, 'ISLAND')}`}
+        ${iov>0.5?`<div class="hint" style="color:var(--dim);font-weight:600">⚠ These items need ~${fmt(Number(r.walls.ISLAND)+iov)}" — island is only ${fmt(r.walls.ISLAND)}" long. Remove/shrink an item or lengthen the island.</div>`:''}`;
+        })()}
       </div>`;
     })():''}
   </div>`:''}
@@ -2674,11 +2803,51 @@ function buildSidebar(){
   side.querySelectorAll('.wFix').forEach(el=>el.addEventListener('change',()=>{
     r.cfg[el.dataset.wall]=r.cfg[el.dataset.wall]||{}; r.cfg[el.dataset.wall][el.dataset.k]=el.checked; buildSidebar(); render();}));
   side.querySelectorAll('.wMode').forEach(b=>b.addEventListener('click',()=>{
-    const on = b.dataset.stw==='1';
-    r.storageWall=r.storageWall||{}; r.storageWall[b.dataset.wall]=on;
-    if(on) r.cfg[b.dataset.wall]={}; /* switching to storage — drop sink/range/etc, start fresh (fridge can be re-checked) */
+    const m = b.dataset.mode, wid = b.dataset.wall;
+    r.storageWall=r.storageWall||{}; r.storageWall[wid]=(m==='storage');
+    /* switching modes drops sink/range/etc and starts fresh, same as before —
+       but a Manual item list survives a detour through another mode, so
+       clicking Manual → Countertop → Manual doesn't lose the user's list */
+    const keep = (r.cfg[wid]&&r.cfg[wid].manualItems) || [];
+    r.cfg[wid] = m==='manual' ? {manual:true, manualItems:keep} : {manualItems:keep};
     buildSidebar(); render();
   }));
+  side.querySelectorAll('.miAdd').forEach(el=>el.addEventListener('change',()=>{
+    const wid=el.dataset.wall; if(el.value==='') return;
+    const entry=manualCatalog(r)[Number(el.value)];
+    r.cfg[wid]=r.cfg[wid]||{manual:true}; r.cfg[wid].manualItems=r.cfg[wid].manualItems||[];
+    r.cfg[wid].manualItems.push(newManualItem(entry, wid==='ISLAND'?r.island.depth:r.baseD));
+    buildSidebar(); render();
+  }));
+  side.querySelectorAll('.miLabel').forEach(el=>el.addEventListener('input',()=>{
+    const it=r.cfg[el.dataset.wall].manualItems[Number(el.dataset.idx)];
+    it.label=el.value||it.label; render();
+  }));
+  side.querySelectorAll('.miW').forEach(el=>el.addEventListener('input',()=>{
+    const it=r.cfg[el.dataset.wall].manualItems[Number(el.dataset.idx)];
+    it.w=Math.max(1,Number(el.value)||it.w);
+    it.code=it.code.replace(/[\d.]+$/, String(Math.round(it.w))); render();
+  }));
+  side.querySelectorAll('.miD').forEach(el=>el.addEventListener('input',()=>{
+    const wid=el.dataset.wall, it=r.cfg[wid].manualItems[Number(el.dataset.idx)];
+    it.d=Math.max(1,Number(el.value)||(wid==='ISLAND'?r.island.depth:r.baseD)); render();
+  }));
+  side.querySelectorAll('.miDel').forEach(el=>el.addEventListener('click',()=>{
+    r.cfg[el.dataset.wall].manualItems.splice(Number(el.dataset.idx),1);
+    buildSidebar(); render();
+  }));
+  let miDragFrom=null;
+  side.querySelectorAll('.manualItem').forEach(el=>{
+    el.addEventListener('dragstart',()=>{ miDragFrom={wall:el.dataset.wall, idx:Number(el.dataset.idx)}; });
+    el.addEventListener('dragover',e=>e.preventDefault());
+    el.addEventListener('drop',e=>{
+      e.preventDefault();
+      if(!miDragFrom || miDragFrom.wall!==el.dataset.wall) return;
+      const list=r.cfg[el.dataset.wall].manualItems, to=Number(el.dataset.idx);
+      const [moved]=list.splice(miDragFrom.idx,1); list.splice(to,0,moved);
+      miDragFrom=null; buildSidebar(); render();
+    });
+  });
   side.querySelectorAll('.stgStyle').forEach(el=>el.addEventListener('change',()=>{
     r.storageStyle=r.storageStyle||{}; r.storageStyle[el.dataset.wall]=el.value; render();
   }));
@@ -2742,6 +2911,58 @@ function render(){
   buildElevPick(); drawPlan(); drawElev(); drawSchedule(); draw3D(); drawEagleEye(); drawSpecSheet();
 }
 function rebuildAll(){ buildRoomBar(); buildSidebar(); render(); }
+
+/* click-and-drag reordering directly on the Plan view, for any wall (or the
+   island) currently in Manual layout mode — lets the user grab a cabinet/
+   sink/fridge in the drawing itself and slide it left-right (or up-down on
+   a side wall) past its neighbors, instead of only reordering via the
+   sidebar list. Cabinets in a run always sit edge-to-edge (real cabinetry
+   doesn't float with gaps), so "sliding" one is expressed as reordering it
+   relative to its neighbors — the same rule the sidebar's drag list uses,
+   just driven from the drawing instead of from a list. */
+function planMouseXY(e){
+  const cv=$('cvPlan'), rect=cv.getBoundingClientRect();
+  return [(e.clientX-rect.left)*(cv.width/rect.width), (e.clientY-rect.top)*(cv.height/rect.height)];
+}
+function planWallT(wallId, px, py){
+  return planHit.walls[wallId]==='V' ? (py-planHit.oy)/planHit.s : (px-planHit.ox)/planHit.s;
+}
+function planHitTest(px,py){
+  const r = room();
+  for(const id of Object.keys(planHit.walls)){
+    const cfgId = id==='ISLAND' ? r.cfg.ISLAND : r.cfg[id];
+    if(!(cfgId && cfgId.manual)) continue;
+    const t = planWallT(id, px, py), lay = layoutWall(r, id);
+    const idx = lay.items.findIndex(it=>t>=it.x && t<=it.x+it.w);
+    if(idx>=0) return {wallId:id, idx};
+  }
+  return null;
+}
+$('cvPlan').addEventListener('mousedown', e=>{
+  const hit = planHitTest(...planMouseXY(e));
+  if(!hit) return;
+  planDrag = hit; $('cvPlan').style.cursor='grabbing'; e.preventDefault();
+});
+window.addEventListener('mousemove', e=>{
+  if(!planDrag) return;
+  const r = room(), cfgId = planDrag.wallId==='ISLAND' ? r.cfg.ISLAND : r.cfg[planDrag.wallId];
+  const items = cfgId && cfgId.manualItems;
+  if(!items || !items[planDrag.idx]){ planDrag=null; return; }
+  const [px,py] = planMouseXY(e), t = planWallT(planDrag.wallId, px, py);
+  const lay = layoutWall(r, planDrag.wallId);
+  if(!lay.items.length){ planDrag=null; return; }
+  let target = lay.items.findIndex(it=>t>=it.x && t<=it.x+it.w);
+  if(target<0) target = t<lay.items[0].x ? 0 : items.length-1;
+  if(target!==planDrag.idx){
+    const [moved]=items.splice(planDrag.idx,1);
+    items.splice(target,0,moved);
+    planDrag.idx=target; render();
+  }
+});
+window.addEventListener('mouseup', ()=>{
+  if(!planDrag) return;
+  planDrag=null; $('cvPlan').style.cursor=''; buildSidebar();
+});
 
 document.querySelectorAll('.tab').forEach(t=>t.addEventListener('click',()=>{
   document.querySelectorAll('.tab').forEach(x=>x.classList.remove('on'));
