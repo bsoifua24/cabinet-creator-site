@@ -756,7 +756,7 @@ function layoutWall(r, id){
         if(hood && hood.on){ /* a hood replaces the standard filler cabinet over the range —
           centered on the range even when its width doesn't match, unlike every other
           upper here which just lines up flush with what's below it */
-          u = {code:'HOOD'+Math.round(hood.w), w:hood.w, h:hood.h, bottom:hood.bottom, d:hood.d, type:'hood'};
+          u = {code:'HOOD'+Math.round(hood.w), w:hood.w, h:hood.h, bottom:hood.bottom, d:hood.d, type:'hood', panel:!!hood.panel};
           /* clamped to the wall's own bounds — an oversized hood centered on
              a range sitting near a corner would otherwise hang off the end
              of the wall instead of just running past its neighbor */
@@ -1065,10 +1065,20 @@ function drawElev(){
     if(u.type==='tvNiche'){ rect(c,x,Yf(u.bottom+u.h),w,u.h*s,2,'#1b2a3a',cabF);
       rect(c,x+w*.08,Yf(u.bottom+u.h*.85),w*.84,u.h*.7*s,2,'#0b0b0d','#15151a');
       txt(c,'TV',x+w/2,Yf(u.bottom+u.h/2),16,'#fff'); continue; }
-    if(u.type==='hood'){ rect(c,x,Yf(u.bottom+u.h),w,u.h*s,2,'#1b2a3a','#f3e9e6');
-      const chimTop=Math.max(u.bottom+u.h,ceil-4), chimW=Math.max(6,u.w*.4)*s, chimX=x+(w-chimW)/2;
-      if(chimTop>u.bottom+u.h) rect(c,chimX,Yf(chimTop),chimW,(chimTop-(u.bottom+u.h))*s,2,'#1b2a3a','#f3e9e6');
-      txt(c,'HOOD',x+w/2,Yf(u.bottom+u.h/2),13,'#5d6d80'); continue; }
+    if(u.type==='hood'){
+      if(u.panel){
+        rect(c,x,Yf(u.bottom+u.h),w,u.h*s,2,'#1b2a3a',cabF);
+        doorDetail(c,x,Yf(u.bottom+u.h),w,u.h*s,dstyle,s);
+        const panelTop=Math.max(u.bottom+u.h,upperTop(r)), ph=panelTop-(u.bottom+u.h);
+        if(ph>0){ rect(c,x,Yf(panelTop),w,ph*s,2,'#1b2a3a',cabF); doorDetail(c,x,Yf(panelTop),w,ph*s,dstyle,s); }
+        txt(c,'HOOD',x+w/2,Yf(u.bottom+u.h/2),13,tcol);
+      } else {
+        rect(c,x,Yf(u.bottom+u.h),w,u.h*s,2,'#1b2a3a','#f3e9e6');
+        const chimTop=Math.max(u.bottom+u.h,ceil-4), chimW=Math.max(10,u.w*.7)*s, chimX=x+(w-chimW)/2;
+        if(chimTop>u.bottom+u.h) rect(c,chimX,Yf(chimTop),chimW,(chimTop-(u.bottom+u.h))*s,2,'#1b2a3a','#f3e9e6');
+        txt(c,'HOOD',x+w/2,Yf(u.bottom+u.h/2),13,'#5d6d80');
+      }
+      continue; }
     if(u.h<=0) continue;
     rect(c,x,Yf(u.bottom+u.h),w,u.h*s,2,'#1b2a3a', u.glass?'#dceaf2':(u.type==='fillerU'?'#e6ebef':cabF));
     if(u.type!=='fillerU' && u.open){
@@ -1276,6 +1286,16 @@ function draw3D(){
         const rw=it.w-.5, rx=it.x+.25;
         put(rw,36,26,rx,18,0,mAppl);
         put(rw-2,3,1,rx+1,35.5,25.5,mTrim,false); /* control panel strip */
+        /* burner rings on the cooktop — same 2x2 layout as the Plan view's
+           icon, laid flat on the top surface, so a range reads as a range
+           in 3D instead of a plain box */
+        const bR=Math.min(rw,26)*.16, bR2=bR*.55;
+        for(let bi=0;bi<4;bi++){
+          const bt=rx+rw*(.28+(bi%2)*.44), bo=26*(.28+Math.floor(bi/2)*.44);
+          const [bx,bz]=pos(bt,bo);
+          const ring=new THREE.Mesh(new THREE.RingGeometry(bR2,bR,24), mTrim);
+          ring.rotation.x=-Math.PI/2; ring.position.set(bx,36.03,bz); g.add(ring);
+        }
         continue;
       }
       if(it.type==='washer'||it.type==='dryer'){put(it.w-1,WD_H,28,it.x+.5,WD_H/2,0,mAppl);continue;}
@@ -1363,15 +1383,28 @@ function draw3D(){
         put(u.w-7,u.h-7,.8,u.x+3.5,u.bottom+u.h/2,nd-2.2,mTV,false);
         continue;
       }
-      if(u.type==='hood'){ /* range hood — appliance-finish body (not a cabinet
-        door), a vent trim strip along the bottom front edge, and a slim
-        chimney duct rising to the ceiling line so it reads as a hood
-        silhouette instead of a plain box */
+      if(u.type==='hood'){
         const hd=u.d||18, cy=u.bottom+u.h/2;
-        put(u.w-.5,u.h,hd,u.x+.25,cy,0,mAppl);
-        put(u.w-3,1,.6,u.x+1.5,u.bottom+2,hd-1,mTrim,false);
-        const chimTop=Math.max(u.bottom+u.h, ceil-4), chimW=Math.max(6,u.w*.4), chimD=hd*.6;
-        if(chimTop>u.bottom+u.h) put(chimW,chimTop-(u.bottom+u.h),chimD,u.x+(u.w-chimW)/2,(u.bottom+u.h+chimTop)/2,(hd-chimD)/2,mAppl);
+        if(u.panel){ /* panel-ready — same treatment as a built-in fridge: cabinet-
+          matched box with a real door face, extended by a matching panel all the
+          way up to the ceiling line so it reads as one continuous built-in
+          column flush with the rest of the run, not a separate appliance */
+          put(u.w-.5,u.h,hd,u.x+.25,cy,0,mCab);
+          doorFace(u.w-.5,u.h-4,u.x+.25,cy,hd);
+          const panelTop=Math.max(u.bottom+u.h, ceilTarget), ph=panelTop-(u.bottom+u.h);
+          if(ph>0){
+            put(u.w-.5,ph,hd,u.x+.25,u.bottom+u.h+ph/2,0,mCab);
+            doorFace(u.w-.5,ph-4,u.x+.25,u.bottom+u.h+ph/2,hd);
+          }
+        } else { /* stainless duct hood — the chimney now runs nearly the full
+          width/depth of the canopy instead of a thin pipe, so the two pieces
+          read as one connected fixture instead of a small box floating above
+          a bigger one */
+          put(u.w-.5,u.h,hd,u.x+.25,cy,0,mAppl);
+          put(u.w-3,1,.6,u.x+1.5,u.bottom+2,hd-1,mTrim,false);
+          const chimTop=Math.max(u.bottom+u.h, ceil-4), chimW=Math.max(10,u.w*.7), chimD=hd*.82;
+          if(chimTop>u.bottom+u.h) put(chimW,chimTop-(u.bottom+u.h),chimD,u.x+(u.w-chimW)/2,(u.bottom+u.h+chimTop)/2,(hd-chimD)/2,mAppl);
+        }
         continue;
       }
       if(u.h<=0)continue;
@@ -1472,6 +1505,13 @@ function draw3D(){
       if(it.type==='range'){
         const rw=it.w-.5, rx=it.x+.25;
         put2(rw,36,idp,rx,18,0,mAppl); put2(rw-2,3,1,rx+1,35.5,.5,mTrim,false);
+        const bR=Math.min(rw,idp)*.16, bR2=bR*.55;
+        for(let bi=0;bi<4;bi++){
+          const bt=rx+rw*(.28+(bi%2)*.44), bo=idp*(.28+Math.floor(bi/2)*.44);
+          const [bx,bz]=pos2(bt,bo);
+          const ring=new THREE.Mesh(new THREE.RingGeometry(bR2,bR,24), mTrim);
+          ring.rotation.x=-Math.PI/2; ring.position.set(bx,36.03,bz); g.add(ring);
+        }
         continue;
       }
       /* a spice rack, trash, or ice-maker pullout is a narrow insert — it
@@ -2753,7 +2793,7 @@ function uppersEditorHtml(r, wid){
    mode, or a manual item in Manual mode) — a hood replaces the standard
    filler cabinet ride() would otherwise put above the range */
 function hoodEditorHtml(r, wid){
-  const hd = (r.cfg[wid]&&r.cfg[wid].hood) || {on:false, w:RANGE_W, h:18, d:18, bottom:66};
+  const hd = (r.cfg[wid]&&r.cfg[wid].hood) || {on:false, w:RANGE_W, h:18, d:18, bottom:66, panel:false};
   return `<label class="chk"><input type="checkbox" class="hoodOn" data-wall="${wid}" ${hd.on?'checked':''}>Range hood (replaces the standard cabinet over the range)</label>
   ${hd.on?`<div class="row2">
     <div class="fld"><label>Hood width (in)</label><input type="number" step="0.5" min="12" class="hoodW" data-wall="${wid}" value="${hd.w}"></div>
@@ -2762,7 +2802,8 @@ function hoodEditorHtml(r, wid){
   <div class="row2">
     <div class="fld"><label>Hood height (in)</label><input type="number" step="0.5" min="6" class="hoodH" data-wall="${wid}" value="${hd.h}"></div>
     <div class="fld"><label>Mount height off floor (in)</label><input type="number" step="0.5" min="24" class="hoodBottom" data-wall="${wid}" value="${hd.bottom}"></div>
-  </div>`:''}`;
+  </div>
+  <label class="chk"><input type="checkbox" class="hoodPanel" data-wall="${wid}" ${hd.panel?'checked':''}>Panel-ready — clad in the cabinet finish, flush and built-in, instead of a stainless duct hood</label>`:''}`;
 }
 function buildSidebar(){
   const r=room(), t=TYPES[r.type], side=$('sidebar');
@@ -2974,7 +3015,7 @@ function buildSidebar(){
         const auto=(layoutWall(r,wid).uppers||[]).filter(u=>u.h>0 && !['mirror','window','tvNiche'].includes(u.type));
         r.cfg[wid].manualUppers = auto.map(u=>({key:genId(), code:u.code||('W'+Math.round(u.w)+Math.round(u.h)),
           label:u.type==='hood'?'Range hood':(u.code||'UPPER'), w:u.w, d:u.d||(u.deep?r.baseD:(u.type==='overRef'?24:r.upD)), h:u.h, bottom:u.bottom,
-          glass:!!u.glass, open:!!u.open, type:u.type==='hood'?'hood':undefined}));
+          glass:!!u.glass, open:!!u.open, type:u.type==='hood'?'hood':undefined, panel:u.type==='hood'?!!u.panel:undefined}));
       }
     } else {
       r.cfg[wid].manualUppers = [];
@@ -3049,7 +3090,7 @@ function buildSidebar(){
   }));
   side.querySelectorAll('.hoodOn').forEach(el=>el.addEventListener('change',()=>{
     const wid=el.dataset.wall; r.cfg[wid]=r.cfg[wid]||{};
-    r.cfg[wid].hood = r.cfg[wid].hood || {w:RANGE_W, h:18, d:18, bottom:66};
+    r.cfg[wid].hood = r.cfg[wid].hood || {w:RANGE_W, h:18, d:18, bottom:66, panel:false};
     r.cfg[wid].hood.on = el.checked;
     buildSidebar(); render();
   }));
@@ -3064,6 +3105,9 @@ function buildSidebar(){
   }));
   side.querySelectorAll('.hoodBottom').forEach(el=>el.addEventListener('input',()=>{
     r.cfg[el.dataset.wall].hood.bottom=Math.max(1,Number(el.value)||66); render();
+  }));
+  side.querySelectorAll('.hoodPanel').forEach(el=>el.addEventListener('change',()=>{
+    r.cfg[el.dataset.wall].hood.panel=el.checked; render();
   }));
   side.querySelectorAll('.lowerCounter').forEach(el=>el.addEventListener('change',()=>{
     r.cfg[el.dataset.wall]=r.cfg[el.dataset.wall]||{}; r.cfg[el.dataset.wall].lowerCounter=el.checked; render();
