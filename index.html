@@ -396,7 +396,12 @@ function newRoom(type, name, category){
   if(type==='closet'){ r.cfg.A={shelves:true,rods:true,drawers:true}; }
   return r;
 }
-const state = { rooms:[newRoom('kitchen')], active:0, sourcePages:[] };
+/* lastTakeoffJson: the raw AI response text from the last successful/failed
+   takeoff run — kept on state (not just the aiJson textarea) so it survives
+   a project save/reload instead of silently disappearing the moment you
+   navigate away or reopen a saved project, which made it impossible to go
+   back and check what the AI actually said after the fact */
+const state = { rooms:[newRoom('kitchen')], active:0, sourcePages:[], lastTakeoffJson:'' };
 const room = () => state.rooms[state.active];
 const wallIds = r => (r=r||room(), r.shape==='single'?['A']:r.shape==='U'?['A','B','C']:['A','B']);
 const counterH = r => (r=r||room(), r.baseH + r.ctT);
@@ -2437,12 +2442,12 @@ function handleTakeoffText(text){
   const clean=extractJson(text);
   try{
     const d=JSON.parse(clean);
-    $('aiJson').value=clean;
+    $('aiJson').value=clean; state.lastTakeoffJson=clean;
     setStatus('Done — loading into the Designer…');
     return d;
   }catch(e){
     console.error('takeoff JSON parse failed', e, text);
-    $('aiJson').value=text||'';
+    $('aiJson').value=text||''; state.lastTakeoffJson=text||'';
     setStatus('The AI reply wasn\'t valid JSON — the raw response is in the box below so you can fix it by hand, or just re-run the takeoff.', true);
     return null;
   }
@@ -3212,6 +3217,7 @@ $('fileIn').addEventListener('change',e=>{
   f.text().then(t=>{try{
     const d=JSON.parse(t);
     if(d.state&&d.state.rooms){ state.rooms=d.state.rooms.map(ensureRoomDefaults); state.active=0; state.sourcePages=d.state.sourcePages||[]; }
+    state.lastTakeoffJson=(d.state&&d.state.lastTakeoffJson)||''; $('aiJson').value=state.lastTakeoffJson;
     $('pName').value=d.project?.name||''; $('pClient').value=d.project?.client||'';
     currentProjectId=null;
     gotoPage('pDesign'); rebuildAll();
@@ -3256,6 +3262,7 @@ function saveCurrentProject(){
 function openProject(id){
   const lib=loadProjectsLib(); const p=lib.find(x=>x.id===id); if(!p) return;
   if(p.state && p.state.rooms){ state.rooms=p.state.rooms.map(ensureRoomDefaults); state.active=0; state.sourcePages=p.state.sourcePages||[]; }
+  state.lastTakeoffJson=(p.state&&p.state.lastTakeoffJson)||''; $('aiJson').value=state.lastTakeoffJson;
   $('pName').value=p.name||''; $('pClient').value=p.client||'';
   currentProjectId=id;
   $('projModal').classList.remove('on');
