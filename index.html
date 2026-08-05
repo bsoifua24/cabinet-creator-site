@@ -239,7 +239,6 @@
       <button class="tab" data-v="v3d">3D View</button>
       <button class="tab" data-v="vsched">Schedule</button>
       <button class="tab" data-v="vspec">Spec Sheet</button>
-      <button class="tab" data-v="vdesign">Room Design</button>
     </div>
     <div class="view on" id="veagle"><div id="eagleWrap"></div></div>
     <div class="view" id="vplan"><div class="sheetbox"><span class="stamp">Plan — scale to fit</span><canvas class="draw" id="cvPlan" width="1600" height="1100"></canvas></div></div>
@@ -253,7 +252,6 @@
       <div id="schedTbl"></div><div class="totals" id="schedTot"></div>
       <button id="btnCSV" style="margin-top:12px">Copy schedule as CSV</button></div></div>
     <div class="view" id="vspec"><div id="specWrap"></div></div>
-    <div class="view" id="vdesign"><div id="designWrap"></div></div>
   </main>
   </div>
 </div>
@@ -328,27 +326,6 @@ function inferCategory(r){
   return 'walkinCloset';
 }
 function hexRgba(hex,a){ const n=parseInt(hex.slice(1),16); return `rgba(${n>>16&255},${n>>8&255},${n&255},${a})`; }
-/* ---- PHASE 6: appliance palette — a typed list, not hardcoded UI, so
-   adding another appliance later is a one-line addition here, not a
-   markup change. w/d are default footprint in inches (real-world, not
-   normalized); wallMounted just flags it as something that goes up on a
-   wall rather than sitting on the floor — informational for now (no
-   physical snapping enforced), used for the palette icon + a lighter
-   fill on the canvas so wall items read as visually distinct. */
-const APPLIANCES = [
-  {key:'dishwasher',        label:'Dishwasher',                 w:24, d:24, wallMounted:false},
-  {key:'oven',               label:'Oven',                        w:30, d:24, wallMounted:false},
-  {key:'refrigerator',       label:'Refrigerator',                w:36, d:30, wallMounted:false},
-  {key:'doubleOven',         label:'Double Oven (stacked)',       w:30, d:24, wallMounted:false},
-  {key:'doubleSink',         label:'Double Sink',                 w:36, d:22, wallMounted:false},
-  {key:'microwave',          label:'Microwave',                   w:24, d:16, wallMounted:true},
-  {key:'microwaveOverOven',  label:'Microwave-over-Oven',         w:30, d:16, wallMounted:true},
-  {key:'frenchWallOven',     label:'French Wall-Mount Oven',      w:30, d:24, wallMounted:true},
-  {key:'steamOven',          label:'Steam Oven',                  w:24, d:24, wallMounted:true},
-  {key:'floatingShelf',      label:'Floating Shelf',              w:36, d:10, wallMounted:true},
-  {key:'trashCompactor',     label:'Trash Compactor',             w:15, d:24, wallMounted:false},
-];
-function applianceDef(key){ return APPLIANCES.find(a=>a.key===key) || APPLIANCES[0]; }
 const DOORS = ['Slab','Shaker','Raised Panel'];
 const CABCOL = [
   {n:'Painted White', h:'#f0ede6'}, {n:'Dove Grey', h:'#b9bdc1'}, {n:'Sage Green', h:'#8a9781'},
@@ -388,9 +365,6 @@ function ensureRoomDefaults(r){
   if(r.source===undefined) r.source=null;
   if(!r.category || !ROOM_CATEGORIES[r.category]) r.category=inferCategory(r);
   if(!r.status || !['pending','active','done'].includes(r.status)) r.status='pending';
-  if(!r.design) r.design={roomW:144, roomD:120, appliances:[], cabinetRuns:[]};
-  if(!Array.isArray(r.design.appliances)) r.design.appliances=[];
-  if(!Array.isArray(r.design.cabinetRuns)) r.design.cabinetRuns=[];
   return r;
 }
 function newRoom(type, name, category){
@@ -413,11 +387,8 @@ function newRoom(type, name, category){
     storageWall:{A:false, B:false, C:false},
     storageStyle:{A:'doors', B:'doors', C:'doors'},
     included:true, source:null, /* source: {page,bbox} when found by the AI takeoff, else null */
-    status:'pending', /* pending|active|done — position in the Phase 5 room queue,
+    status:'pending' /* pending|active|done — position in the Phase 5 room queue,
       meaningful only for hasCabinets categories; see roomQueue() */
-    design:{roomW:144, roomD:120, appliances:[], cabinetRuns:[]} /* Phase 6 — the
-      free-form design canvas's own scale (real-world inches) and placed items,
-      independent of the wall-length model the rest of the Designer uses */
   };
   if(type==='kitchen'){ r.cfg.A={sink:true,dw:true,window:true}; r.cfg.B={range:true,fridge:true}; }
   if(type==='bath'){ r.cfg.A={vanity:true,toilet:true}; }
@@ -1488,143 +1459,6 @@ function drawSpecSheet(){
       ${scheduleTableHtml(rows)}
       <div class="totals">base ${(baseLF/12).toFixed(1)} LF · uppers ${(upperLF/12).toFixed(1)} LF · tall ×${tallN} · ceiling ${fmt(r.ceil)}", counter ${fmt(counterH(r))}" AFF</div>
     </div>`;
-}
-/* ---- PHASE 6: RoomDesignCanvas — a free-form surface for the active
-   room where cabinet runs and appliances get placed by hand, independent
-   of the wall-length/checkbox model the rest of the Designer uses. Scale
-   comes from r.design.roomW/roomD (real-world inches, user-set) mapped
-   onto the traced boundary's own shape when one exists (Eagle Eye → Map),
-   or a plain rectangle when it doesn't. */
-function roomSpacePoly(poly, roomW, roomD){
-  const [x0,y0,x1,y1]=polyBBoxOf(poly), bw=Math.max(1e-6,x1-x0), bh=Math.max(1e-6,y1-y0);
-  return poly.map(p=>[(p[0]-x0)/bw*roomW, (p[1]-y0)/bh*roomD]);
-}
-let designTool='select', designSel=null, designDrag=null, designDragInit=false;
-function ensureDesignDragListeners(){
-  if(designDragInit) return; designDragInit=true;
-  window.addEventListener('mousemove',e=>{
-    if(!designDrag) return;
-    const {cv,toRoom,r}=designDrag;
-    const b=cv.getBoundingClientRect();
-    const px=(e.clientX-b.left)*(cv.width/b.width), py=(e.clientY-b.top)*(cv.height/b.height);
-    const [rx,ry]=toRoom(px,py);
-    if(designDrag.type==='move'){
-      const it=r.design.appliances[designDrag.ai];
-      it.x=rx-designDrag.offX; it.y=ry-designDrag.offY;
-      designDrag.paint();
-    } else if(designDrag.type==='run'){
-      designDrag.x2=rx; designDrag.y2=ry;
-      designDrag.paint();
-    }
-  });
-  window.addEventListener('mouseup',()=>{
-    if(!designDrag) return;
-    if(designDrag.type==='run'){
-      const {x1,y1,x2,y2,r}=designDrag;
-      if(Math.hypot(x2-x1,y2-y1)>=6) r.design.cabinetRuns.push({x1,y1,x2,y2,depth:24});
-      drawRoomDesign();
-    }
-    designDrag=null;
-  });
-}
-function drawRoomDesign(){
-  const wrap=$('designWrap'); if(!wrap) return;
-  const r=room();
-  const poly = r.source ? polyOf(r) : null;
-  const html=`<div class="sheetbox" style="padding:16px;margin-bottom:14px">
-    <h3 style="font:600 15px var(--mono);letter-spacing:.05em;margin-bottom:10px">#${state.active+1} ${r.name.toUpperCase()} — ROOM DESIGN</h3>
-    <div class="row2">
-      <div class="fld"><label>Room width (in)</label><input type="number" id="designW" value="${r.design.roomW}"></div>
-      <div class="fld"><label>Room depth (in)</label><input type="number" id="designD" value="${r.design.roomD}"></div>
-    </div>
-    <p class="hint">${poly ? 'Outline traced from the blueprint (Eagle Eye → Map) — width/depth calibrate its real-world scale.' : 'No traced boundary for this room yet, showing a plain rectangle at the size above — draw one in Eagle Eye → Map for an accurate outline.'}</p>
-  </div>
-  <div style="display:grid;grid-template-columns:230px 1fr;gap:16px;align-items:start">
-    <div class="wallcard">
-      <h4>APPLIANCE PALETTE</h4>
-      ${APPLIANCES.map(a=>`<button class="paletteBtn" data-k="${a.key}" style="display:block;width:100%;text-align:left;margin-bottom:6px;padding:7px 9px;font-size:12px">${a.label}<br><span style="color:var(--ink-soft);font-size:10px">${a.w}"×${a.d}"${a.wallMounted?' · wall-mounted':''}</span></button>`).join('')}
-      <div class="segs" style="margin-top:12px">
-        <button class="designToolBtn ${designTool==='select'?'on':''}" data-t="select">Move/select</button>
-        <button class="designToolBtn ${designTool==='run'?'on':''}" data-t="run">Draw cabinet run</button>
-      </div>
-      <button id="designDelete" class="ghost" style="width:100%;margin-top:10px;padding:6px;font-size:11px" ${designSel==null?'disabled':''}>Delete selected</button>
-      <p class="hint" style="margin-top:10px">${designTool==='run' ? 'Click and drag across the room to draw a cabinet run.' : 'Click a palette item to place it at the center, then drag to reposition. Click a placed item to select it.'}</p>
-    </div>
-    <div class="sheetbox" style="padding:6px"><canvas class="draw" id="cvDesign" width="1400" height="1000"></canvas></div>
-  </div>`;
-  wrap.innerHTML=html;
-
-  $('designW').addEventListener('input',()=>{ r.design.roomW=Number($('designW').value)||144; drawRoomDesign(); });
-  $('designD').addEventListener('input',()=>{ r.design.roomD=Number($('designD').value)||120; drawRoomDesign(); });
-  wrap.querySelectorAll('.paletteBtn').forEach(b=>b.addEventListener('click',()=>{
-    r.design.appliances.push({key:b.dataset.k, x:r.design.roomW/2, y:r.design.roomD/2, rot:0});
-    designSel=r.design.appliances.length-1;
-    drawRoomDesign();
-  }));
-  wrap.querySelectorAll('.designToolBtn').forEach(b=>b.addEventListener('click',()=>{
-    designTool=b.dataset.t; designSel=null; drawRoomDesign();
-  }));
-  const ddel=$('designDelete'); if(ddel) ddel.addEventListener('click',()=>{
-    if(designSel!=null){ r.design.appliances.splice(designSel,1); designSel=null; drawRoomDesign(); }
-  });
-
-  initDesignCanvas($('cvDesign'), r, poly);
-}
-function initDesignCanvas(cv, r, poly){
-  const ctx=ctxSetup(cv);
-  const roomW=Number(r.design.roomW)||144, roomD=Number(r.design.roomD)||120;
-  const pad=40, s=Math.min((cv.width-2*pad)/roomW, (cv.height-2*pad)/roomD);
-  const ox=(cv.width-roomW*s)/2, oy=(cv.height-roomD*s)/2;
-  const X=v=>ox+v*s, Y=v=>oy+v*s;
-  const toRoom=(px,py)=>[(px-ox)/s, (py-oy)/s];
-  function paint(){
-    ctx.clearRect(0,0,cv.width,cv.height);
-    if(poly){
-      const rp=roomSpacePoly(poly,roomW,roomD).map(p=>[X(p[0]),Y(p[1])]);
-      ctx.save(); ctx.beginPath(); rp.forEach((p,k)=>k===0?ctx.moveTo(p[0],p[1]):ctx.lineTo(p[0],p[1])); ctx.closePath();
-      ctx.fillStyle='#f7f5f0'; ctx.fill(); ctx.lineWidth=2.5; ctx.strokeStyle='#1b2a3a'; ctx.stroke(); ctx.restore();
-    } else {
-      rect(ctx,X(0),Y(0),roomW*s,roomD*s,2.5,'#1b2a3a','#f7f5f0');
-    }
-    r.design.cabinetRuns.forEach(run=>{
-      const depth=run.depth||24;
-      ctx.save(); ctx.strokeStyle='#d8c19a'; ctx.lineWidth=Math.max(2,depth*s); ctx.lineCap='butt';
-      ctx.beginPath(); ctx.moveTo(X(run.x1),Y(run.y1)); ctx.lineTo(X(run.x2),Y(run.y2)); ctx.stroke(); ctx.restore();
-      line(ctx,X(run.x1),Y(run.y1),X(run.x2),Y(run.y2),1.5,'#8a6a3f');
-    });
-    r.design.appliances.forEach((it,ai)=>{
-      const def=applianceDef(it.key), swap=(it.rot===90||it.rot===270);
-      const rw=swap?def.d:def.w, rd=swap?def.w:def.d;
-      const sel=designSel===ai;
-      rect(ctx,X(it.x-rw/2),Y(it.y-rd/2),rw*s,rd*s,sel?3:2,sel?'#2f6fd1':'#1b2a3a',def.wallMounted?'#dce8f2':'#e9e2d3');
-      txt(ctx,def.label,X(it.x),Y(it.y),Math.max(8,Math.min(12,rw*s/6)),'#1b2a3a');
-    });
-  }
-  paint();
-  cv.addEventListener('mousedown',e=>{
-    const b=cv.getBoundingClientRect();
-    const px=(e.clientX-b.left)*(cv.width/b.width), py=(e.clientY-b.top)*(cv.height/b.height);
-    const [rx,ry]=toRoom(px,py);
-    if(designTool==='run'){
-      designDrag={type:'run',cv,toRoom,r,paint,x1:rx,y1:ry,x2:rx,y2:ry};
-      ensureDesignDragListeners(); return;
-    }
-    for(let ai=r.design.appliances.length-1; ai>=0; ai--){
-      const it=r.design.appliances[ai], def=applianceDef(it.key), swap=(it.rot===90||it.rot===270);
-      const rw=swap?def.d:def.w, rd=swap?def.w:def.d;
-      if(rx>=it.x-rw/2 && rx<=it.x+rw/2 && ry>=it.y-rd/2 && ry<=it.y+rd/2){
-        designSel=ai;
-        designDrag={type:'move',cv,toRoom,r,paint,ai,offX:rx-it.x,offY:ry-it.y};
-        ensureDesignDragListeners();
-        const ddel=$('designDelete'); if(ddel) ddel.disabled=false;
-        paint();
-        return;
-      }
-    }
-    designSel=null;
-    const ddel=$('designDelete'); if(ddel) ddel.disabled=true;
-    paint();
-  });
 }
 function csv(){
   let out='Room,Code,Type,Qty,Width_in,Height_in,Depth_in,Walls,Finish\n';
@@ -2905,7 +2739,7 @@ function buildElevPick(){
 }
 function render(){
   if(!wallIds().includes(elevWall)) elevWall='A';
-  buildElevPick(); drawPlan(); drawElev(); drawSchedule(); draw3D(); drawEagleEye(); drawSpecSheet(); drawRoomDesign();
+  buildElevPick(); drawPlan(); drawElev(); drawSchedule(); draw3D(); drawEagleEye(); drawSpecSheet();
 }
 function rebuildAll(){ buildRoomBar(); buildSidebar(); render(); }
 
@@ -2914,7 +2748,6 @@ document.querySelectorAll('.tab').forEach(t=>t.addEventListener('click',()=>{
   document.querySelectorAll('.view').forEach(x=>x.classList.remove('on'));
   t.classList.add('on'); $(t.dataset.v).classList.add('on');
   if(t.dataset.v==='v3d') draw3D();
-  if(t.dataset.v==='vdesign') drawRoomDesign();
 }));
 
 /* ================= PRINT SET ================= */
