@@ -327,9 +327,14 @@ function inferCategory(r){
 }
 function hexRgba(hex,a){ const n=parseInt(hex.slice(1),16); return `rgba(${n>>16&255},${n>>8&255},${n&255},${a})`; }
 const DOORS = ['Slab','Shaker','Raised Panel'];
+/* new entries only ever get appended, never inserted/reordered — r.fin.cabBase/
+   cabUpper store a plain array index, so shifting positions would silently
+   repaint every existing saved project's cabinets to a different finish */
 const CABCOL = [
   {n:'Painted White', h:'#f0ede6'}, {n:'Dove Grey', h:'#b9bdc1'}, {n:'Sage Green', h:'#8a9781'},
-  {n:'Navy Blue', h:'#2e3f54'}, {n:'Stained Oak', h:'#9d7b52'}, {n:'Walnut', h:'#5d4531'}, {n:'Matte Black', h:'#2f2f30'}
+  {n:'Navy Blue', h:'#2e3f54'}, {n:'Stained Oak', h:'#9d7b52'}, {n:'Walnut', h:'#5d4531'}, {n:'Matte Black', h:'#2f2f30'},
+  {n:'White Oak', h:'#d7c3a1'}, {n:'Maple', h:'#e2cd9c'}, {n:'Birch', h:'#e8ddb9'},
+  {n:'Paint Grade', h:'#ded6c6'}, {n:'Cherry Wood', h:'#7c3f2d'}
 ];
 const TOPCOL = [
   {n:'White Quartz', h:'#eceae4'}, {n:'Carrara Marble', h:'#dcdde2'}, {n:'Butcher Block', h:'#c49a5e'},
@@ -355,6 +360,14 @@ function ensureRoomDefaults(r){
   if(r.fin.handle==null) r.fin.handle=1;
   if(r.fin.handleColor==null) r.fin.handleColor=0;
   if(r.fin.handleSize==null) r.fin.handleSize=1;
+  /* base/upper cabinet finish and handle style used to be one shared value
+     (r.fin.cab / r.fin.handle) — backfilled from those for any room saved
+     before the split, so an older project keeps looking exactly the same
+     instead of resetting to a default finish on load */
+  if(r.fin.cabBase==null) r.fin.cabBase = r.fin.cab!=null ? r.fin.cab : 4;
+  if(r.fin.cabUpper==null) r.fin.cabUpper = r.fin.cab!=null ? r.fin.cab : 4;
+  if(r.fin.handleBase==null) r.fin.handleBase = r.fin.handle!=null ? r.fin.handle : 1;
+  if(r.fin.handleUpper==null) r.fin.handleUpper = r.fin.handle!=null ? r.fin.handle : 1;
   if(!r.island) r.island={enabled:false,depth:24,height:36,bar:false,barChairs:4,pendant:false,pendantCount:3};
   if(r.bathUppers==null) r.bathUppers=false;
   if(r.type==='bath' && r.bathUppers && !r.upH) r.upH=30;
@@ -376,7 +389,7 @@ function newRoom(type, name, category){
     baseH:t.baseH, baseD:t.baseD, toe:t.toe, ctT:t.ctT, splash:t.splash,
     walls:{A: type==='kitchen'?150:96, B:120, C:120, ISLAND:84},
     cfg:{A:{}, B:{}, C:{}, ISLAND:{}},
-    fin:{door:1, cab:4, top:0, sink:0, fridgeBuiltIn:false, handle:1, handleColor:0, handleSize:1},
+    fin:{door:1, cabBase:4, cabUpper:4, top:0, sink:0, fridgeBuiltIn:false, handleBase:1, handleUpper:1, handleColor:0, handleSize:1},
     /* island length/fixtures live in walls.ISLAND / cfg.ISLAND above, reusing
        the same layoutWall engine as a perimeter wall; this just holds the
        island-specific extras that don't fit that shape */
@@ -880,7 +893,7 @@ function drawPlan(){
   const totalH = H+islandH;
   const pad=130, s=Math.min((cv.width-2*pad)/W,(cv.height-2*pad)/totalH);
   const ox=(cv.width-W*s)/2, oy=(cv.height-totalH*s)/2, X=v=>ox+v*s, Y=v=>oy+v*s;
-  const cabF = tint(CABCOL[r.fin.cab].h,.72);
+  const cabF = tint(CABCOL[r.fin.cabBase].h,.72); /* Plan is a top-down view of the base run only — uppers aren't drawn as boxes here, just a dashed line */
   /* records where each wall's run lands in canvas space, so a later mouse
      event on this same canvas can be converted back into "inches along the
      wall" for click-to-select/drag-to-reorder on Manual-layout walls —
@@ -995,7 +1008,8 @@ function drawElev(){
   const lay=layoutWall(r,elevWall), ceil=Number(r.ceil), L=lay.L||1;
   const pad=150, s=Math.min((cv.width-2*pad)/L,(cv.height-2*pad)/ceil);
   const ox=(cv.width-L*s)/2, oy=(cv.height+ceil*s)/2, X=v=>ox+v*s, Yf=v=>oy-v*s;
-  const cab = CABCOL[r.fin.cab].h, cabF=tint(cab,.15), tcol = lum(cab)>.5?'#1b2a3a':'#ffffff';
+  const cabBase = CABCOL[r.fin.cabBase].h, cabF=tint(cabBase,.15), tcol = lum(cabBase)>.5?'#1b2a3a':'#ffffff';
+  const cabUpperHex = CABCOL[r.fin.cabUpper].h, cabFU=tint(cabUpperHex,.15), tcolU = lum(cabUpperHex)>.5?'#1b2a3a':'#ffffff';
   const topF = TOPCOL[r.fin.top].h;
   const dstyle = r.fin.door;
 
@@ -1062,16 +1076,16 @@ function drawElev(){
       line(c,x+w*.2,Yf(u.bottom+u.h*.85),x+w*.5,Yf(u.bottom+u.h*.3),1.2,'#b9c8d4'); txt(c,'MIRROR',x+w/2,Yf(u.bottom+u.h/2)+0,13,'#5d6d80'); continue; }
     if(u.type==='window'){ rect(c,x+w*.1,Yf(upperTop(r)),w*.8,Number(r.upH)*s,1.5,'#5d6d80');
       line(c,x+w*.5,Yf(upperTop(r)),x+w*.5,Yf(upperBottom(r)),1,'#5d6d80'); txt(c,'WINDOW',x+w/2,Yf(upperBottom(r)+r.upH/2)+18,13,'#5d6d80'); continue; }
-    if(u.type==='tvNiche'){ rect(c,x,Yf(u.bottom+u.h),w,u.h*s,2,'#1b2a3a',cabF);
+    if(u.type==='tvNiche'){ rect(c,x,Yf(u.bottom+u.h),w,u.h*s,2,'#1b2a3a',cabFU);
       rect(c,x+w*.08,Yf(u.bottom+u.h*.85),w*.84,u.h*.7*s,2,'#0b0b0d','#15151a');
       txt(c,'TV',x+w/2,Yf(u.bottom+u.h/2),16,'#fff'); continue; }
     if(u.type==='hood'){
       if(u.panel){
-        rect(c,x,Yf(u.bottom+u.h),w,u.h*s,2,'#1b2a3a',cabF);
+        rect(c,x,Yf(u.bottom+u.h),w,u.h*s,2,'#1b2a3a',cabFU);
         doorDetail(c,x,Yf(u.bottom+u.h),w,u.h*s,dstyle,s);
         const panelTop=Math.max(u.bottom+u.h,upperTop(r)), ph=panelTop-(u.bottom+u.h);
-        if(ph>0){ rect(c,x,Yf(panelTop),w,ph*s,2,'#1b2a3a',cabF); doorDetail(c,x,Yf(panelTop),w,ph*s,dstyle,s); }
-        txt(c,'HOOD',x+w/2,Yf(u.bottom+u.h/2),13,tcol);
+        if(ph>0){ rect(c,x,Yf(panelTop),w,ph*s,2,'#1b2a3a',cabFU); doorDetail(c,x,Yf(panelTop),w,ph*s,dstyle,s); }
+        txt(c,'HOOD',x+w/2,Yf(u.bottom+u.h/2),13,tcolU);
       } else {
         rect(c,x,Yf(u.bottom+u.h),w,u.h*s,2,'#1b2a3a','#f3e9e6');
         const chimTop=Math.max(u.bottom+u.h,ceil-4), chimW=Math.max(10,u.w*.7)*s, chimX=x+(w-chimW)/2;
@@ -1080,19 +1094,19 @@ function drawElev(){
       }
       continue; }
     if(u.h<=0) continue;
-    rect(c,x,Yf(u.bottom+u.h),w,u.h*s,2,'#1b2a3a', u.glass?'#dceaf2':(u.type==='fillerU'?'#e6ebef':cabF));
+    rect(c,x,Yf(u.bottom+u.h),w,u.h*s,2,'#1b2a3a', u.glass?'#dceaf2':(u.type==='fillerU'?'#e6ebef':cabFU));
     if(u.type!=='fillerU' && u.open){
       for(let sh=12; sh<u.h-6; sh+=12) line(c,x+3,Yf(u.bottom+u.h-sh),x+w-3,Yf(u.bottom+u.h-sh),1.3,'#00000033');
-      txt(c,u.code,x+w/2,Yf(u.bottom+u.h/2),Math.min(15,w/3.8),tcol);
+      txt(c,u.code,x+w/2,Yf(u.bottom+u.h/2),Math.min(15,w/3.8),tcolU);
     } else if(u.type!=='fillerU' && u.glass){
       rect(c,x+4,Yf(u.bottom+u.h-4),w-8,(u.h-8)*s,1,'#5d6d80');
       line(c,x+w/2,Yf(u.bottom+u.h-4),x+w/2,Yf(u.bottom+4),1,'#5d6d80');
-      txt(c,u.code,x+w/2,Yf(u.bottom+u.h/2),Math.min(15,w/3.8),tcol);
+      txt(c,u.code,x+w/2,Yf(u.bottom+u.h/2),Math.min(15,w/3.8),tcolU);
     } else if(u.type!=='fillerU'){
       if(u.w>=27){ line(c,x+w/2,Yf(u.bottom+u.h),x+w/2,Yf(u.bottom),1.5);
         doorDetail(c,x,Yf(u.bottom+u.h),w/2,u.h*s,dstyle,s); doorDetail(c,x+w/2,Yf(u.bottom+u.h),w/2,u.h*s,dstyle,s); }
       else doorDetail(c,x,Yf(u.bottom+u.h),w,u.h*s,dstyle,s);
-      txt(c,u.code,x+w/2,Yf(u.bottom+u.h/2),Math.min(15,w/3.8),tcol);
+      txt(c,u.code,x+w/2,Yf(u.bottom+u.h/2),Math.min(15,w/3.8),tcolU);
     }
   }
   /* dims */
@@ -1107,7 +1121,8 @@ function drawElev(){
   dimV(c,Yf(ceil),Yf(0),X(0)-110,fmt(ceil)+'"');
   dimH(c,X(0),X(L),Yf(0)+76,fmt(L)+'" OVERALL');
   txt(c,(r.name+' — ELEVATION, WALL '+elevWall).toUpperCase(),cv.width/2,44,22);
-  txt(c,`${DOORS[r.fin.door]} door · ${CABCOL[r.fin.cab].n} · ${TOPCOL[r.fin.top].n}${TYPES[r.type].sinks[r.fin.sink]?' · '+TYPES[r.type].sinks[r.fin.sink]:''}`,cv.width/2,72,15,'#5d6d80');
+  const cabLine = r.fin.cabBase===r.fin.cabUpper ? CABCOL[r.fin.cabBase].n : `${CABCOL[r.fin.cabBase].n} base / ${CABCOL[r.fin.cabUpper].n} upper`;
+  txt(c,`${DOORS[r.fin.door]} door · ${cabLine} · ${TOPCOL[r.fin.top].n}${TYPES[r.type].sinks[r.fin.sink]?' · '+TYPES[r.type].sinks[r.fin.sink]:''}`,cv.width/2,72,15,'#5d6d80');
 }
 
 /* ================= 3D ================= */
@@ -1141,11 +1156,18 @@ function draw3D(){
   if(three.group) three.scene.remove(three.group);
   const g=new THREE.Group(); three.group=g;
 
-  const cabHex=parseInt(CABCOL[r.fin.cab].h.slice(1),16), topHex=parseInt(TOPCOL[r.fin.top].h.slice(1),16);
+  /* base and upper cabinets can be two different finishes now — two full
+     material sets (body/dark-accent/light-accent), sharing one wood-grain
+     texture map so only the tint differs, matching how a shop would still
+     use the same door-panel machining regardless of species/finish */
+  const cabHexBase=parseInt(CABCOL[r.fin.cabBase].h.slice(1),16), cabHexUpper=parseInt(CABCOL[r.fin.cabUpper].h.slice(1),16), topHex=parseInt(TOPCOL[r.fin.top].h.slice(1),16);
   const cabTex=woodGrainCanvas(); cabTex.repeat.set(2,1.3);
-  const mCab=new THREE.MeshStandardMaterial({color:cabHex, map:cabTex, roughness:.55});
-  const mCabD=new THREE.MeshStandardMaterial({color:new THREE.Color(cabHex).multiplyScalar(.7), map:cabTex, roughness:.6});
-  const mCabL=new THREE.MeshStandardMaterial({color:new THREE.Color(cabHex).multiplyScalar(1.25), map:cabTex, roughness:.5});
+  const mCab=new THREE.MeshStandardMaterial({color:cabHexBase, map:cabTex, roughness:.55});
+  const mCabD=new THREE.MeshStandardMaterial({color:new THREE.Color(cabHexBase).multiplyScalar(.7), map:cabTex, roughness:.6});
+  const mCabL=new THREE.MeshStandardMaterial({color:new THREE.Color(cabHexBase).multiplyScalar(1.25), map:cabTex, roughness:.5});
+  const mCabU=new THREE.MeshStandardMaterial({color:cabHexUpper, map:cabTex, roughness:.55});
+  const mCabDU=new THREE.MeshStandardMaterial({color:new THREE.Color(cabHexUpper).multiplyScalar(.7), map:cabTex, roughness:.6});
+  const mCabLU=new THREE.MeshStandardMaterial({color:new THREE.Color(cabHexUpper).multiplyScalar(1.25), map:cabTex, roughness:.5});
   const topName=TOPCOL[r.fin.top].n;
   const topTex = topName==='Butcher Block' ? woodGrainCanvas() : stoneTexture(topName!=='Concrete');
   topTex.repeat.set(4,1.4);
@@ -1165,7 +1187,7 @@ function draw3D(){
   const mTV=new THREE.MeshStandardMaterial({color:0x0b0b0d, roughness:.15, metalness:.1});
   const mGranite=new THREE.MeshStandardMaterial({color:0x2c2f31, map:stoneTexture(false), roughness:.28});
   mGranite.map.repeat.set(6,1);
-  const edgeCol=lum(CABCOL[r.fin.cab].h)>.5?0x6b6b66:0x1f1a14;
+  const edgeCol=lum(CABCOL[r.fin.cabBase].h)>.5?0x6b6b66:0x1f1a14;
   const edge=geo=>new THREE.LineSegments(new THREE.EdgesGeometry(geo),new THREE.LineBasicMaterial({color:edgeCol}));
 
   const ids=wallIds(r), bd=r.baseD, ud=r.upD, ceil=Number(r.ceil);
@@ -1213,36 +1235,41 @@ function draw3D(){
       if(edges){const e=edge(geo);e.position.copy(m.position);e.rotation.copy(m.rotation);g.add(e);}
       return m;
     }
-    function placeHandle(w,h,t,yC,frontOff,left,bottom){ /* hardware — drawn regardless
+    function placeHandle(w,h,t,yC,frontOff,left,bottom,upper){ /* hardware — drawn regardless
       of door style (even a slab door gets a handle), proud of the door face so it
       reads as real hardware rather than a shading difference. left: put it on the
       panel's left edge instead of the right (the two doors of a double-wide
       fridge/freezer both reach for the shared center divider, not opposite outer
       edges). bottom: put it near the panel's bottom instead of the top (a wall
-      cabinet's hardware needs to be reachable from below, opposite a base cabinet). */
-      if(!r.fin.handle || w<5) return;
+      cabinet's hardware needs to be reachable from below, opposite a base cabinet).
+      upper: use the upper-cabinet handle style instead of the base one — the two
+      can now be turned on/off (or styled) independently. */
+      const style = upper ? r.fin.handleUpper : r.fin.handleBase;
+      if(!style || w<5) return;
       const m = handleMul, hx = left ? t+Math.min(4.5,w*.18) : t+w-Math.min(4.5,w*.18),
         hy = bottom ? yC-h*.24 : yC+h*.24, hOff = frontOff+1.9;
-      if(r.fin.handle===1) put(.55,4.5*m,.55, hx,hy,hOff, mHandle, false); /* bar pull */
-      else if(r.fin.handle===2) put(1.1*m,1.1*m,1.1*m, hx-.55*m,hy,hOff, mHandle, false); /* knob */
+      if(style===1) put(.55,4.5*m,.55, hx,hy,hOff, mHandle, false); /* bar pull */
+      else if(style===2) put(1.1*m,1.1*m,1.1*m, hx-.55*m,hy,hOff, mHandle, false); /* knob */
       else put(2.6*m,.55,.55, hx-2.6*m,hy,hOff, mHandle, false); /* cup pull */
     }
-    function doorFace(w,h,t,yC,frontOff,handleLeft,handleBottom){ /* panel-style detail
+    function doorFace(w,h,t,yC,frontOff,handleLeft,handleBottom,upper){ /* panel-style detail
       on the door face — edges on so the style reads clearly regardless of lighting
-      angle, not just from a subtle shading difference */
+      angle, not just from a subtle shading difference. upper: use the upper-cabinet
+      finish (mCabLU/mCabDU) instead of the base one (mCabL/mCabD). */
+      const mL = upper ? mCabLU : mCabL, mD = upper ? mCabDU : mCabD;
       if(r.fin.door!==0){ /* slab: flat door, no panel detail — still gets a handle below */
         const inset=Math.min(3,w*.14), pw=w-2*inset, ph=h-2*inset;
         if(pw>=3 && ph>=3){
           if(r.fin.door===2){ /* raised panel: stepped bevel, two nested boxes */
-            put(pw, ph, 1, t+inset, yC, frontOff+.5, mCabL, true);
+            put(pw, ph, 1, t+inset, yC, frontOff+.5, mL, true);
             const inset2=inset*.6, pw2=pw-2*inset2, ph2=ph-2*inset2;
-            if(pw2>2 && ph2>2) put(pw2, ph2, .6, t+inset+inset2, yC, frontOff+1.1, mCabL, true);
+            if(pw2>2 && ph2>2) put(pw2, ph2, .6, t+inset+inset2, yC, frontOff+1.1, mL, true);
           } else { /* shaker: single recessed panel, crisp routed-groove outline */
-            put(pw, ph, .8, t+inset, yC, frontOff-.9, mCabD, true);
+            put(pw, ph, .8, t+inset, yC, frontOff-.9, mD, true);
           }
         }
       }
-      placeHandle(w,h,t,yC,frontOff,handleLeft,handleBottom);
+      placeHandle(w,h,t,yC,frontOff,handleLeft,handleBottom,upper);
     }
     {const geo=new THREE.BoxGeometry(lay.L,ceil,5);const m=new THREE.Mesh(geo,mWall);
      const [px,pz]=pos(lay.L/2,-2.5); m.position.set(px,ceil/2,pz); m.rotation.y=rotY; m.receiveShadow=true; g.add(m);}
@@ -1359,9 +1386,12 @@ function draw3D(){
           put(1,5,1,cx-.5,counterH(r)+2.5,sd*.06,mTrim,false);
           put(3.2,1,1,cx-1.6,counterH(r)+5,sd*.13,mTrim,false);
         } else {
+          const cx=i.x+i.w*.5; /* faucet centered exactly on the basin's own
+            midpoint, not a fixed fraction of the sink's width — the old
+            .47/.44 fractions left it visibly off-center for a wide sink */
           put(i.w*.6,1.2,sd*.55,i.x+i.w*.2,counterH(r)+.4,sd*.18,mAppl,false);
-          put(1,5,1,i.x+i.w*.47,counterH(r)+2.5,sd*.06,mTrim,false);  /* faucet riser — at the back, against the wall/backsplash */
-          put(3.2,1,1,i.x+i.w*.44,counterH(r)+5,sd*.13,mTrim,false);  /* faucet spout, arcing slightly forward over the basin */
+          put(1,5,1,cx-.5,counterH(r)+2.5,sd*.06,mTrim,false);  /* faucet riser — at the back, against the wall/backsplash */
+          put(3.2,1,1,cx-1.6,counterH(r)+5,sd*.13,mTrim,false);  /* faucet spout, arcing slightly forward over the basin */
         }
         if(r.type==='bath'&&r.fin.sink===1) put(i.w*.42,4,i.w*.42>sd*.5?sd*.5:i.w*.42,i.x+i.w*.29,counterH(r)+2,sd*.22,mAppl,false);
       }
@@ -1379,7 +1409,7 @@ function draw3D(){
       if(u.type==='tvNiche'){ /* recessed alcove — the screen sits inset from the surrounding
         cabinet fronts instead of proud of them, reading as flush-mounted into the wall */
         const nd=u.deep?bd:ud;
-        put(u.w-.5,u.h,nd,u.x+.25,u.bottom+u.h/2,0,mCabD);
+        put(u.w-.5,u.h,nd,u.x+.25,u.bottom+u.h/2,0,mCabDU);
         put(u.w-7,u.h-7,.8,u.x+3.5,u.bottom+u.h/2,nd-2.2,mTV,false);
         continue;
       }
@@ -1389,12 +1419,12 @@ function draw3D(){
           matched box with a real door face, extended by a matching panel all the
           way up to the ceiling line so it reads as one continuous built-in
           column flush with the rest of the run, not a separate appliance */
-          put(u.w-.5,u.h,hd,u.x+.25,cy,0,mCab);
-          doorFace(u.w-.5,u.h-4,u.x+.25,cy,hd);
+          put(u.w-.5,u.h,hd,u.x+.25,cy,0,mCabU);
+          doorFace(u.w-.5,u.h-4,u.x+.25,cy,hd,false,true,true);
           const panelTop=Math.max(u.bottom+u.h, ceilTarget), ph=panelTop-(u.bottom+u.h);
           if(ph>0){
-            put(u.w-.5,ph,hd,u.x+.25,u.bottom+u.h+ph/2,0,mCab);
-            doorFace(u.w-.5,ph-4,u.x+.25,u.bottom+u.h+ph/2,hd);
+            put(u.w-.5,ph,hd,u.x+.25,u.bottom+u.h+ph/2,0,mCabU);
+            doorFace(u.w-.5,ph-4,u.x+.25,u.bottom+u.h+ph/2,hd,false,false,true);
           }
         } else { /* stainless duct hood — the chimney now runs nearly the full
           width/depth of the canopy instead of a thin pipe, so the two pieces
@@ -1411,8 +1441,8 @@ function draw3D(){
       const d=u.d||(u.type==='overRef'?(u.deep?bd:24):(u.deep?bd:ud)); /* a flush storage wall's uppers
         match the base/fridge depth instead of a normal wall cabinet's shallower depth;
         u.d (Manual-layout uppers only) overrides both when the user set one explicitly */
-      put(u.w-.5,u.h,d,u.x+.25,u.bottom+u.h/2,0, u.glass?mGlass:(u.type==='fillerU'?mCabD:mCab));
-      if(u.type!=='fillerU'&&!u.open&&!u.glass) doorFace(u.w-.5,u.h-3,u.x+.25,u.bottom+u.h/2,d,false,true); /* wall
+      put(u.w-.5,u.h,d,u.x+.25,u.bottom+u.h/2,0, u.glass?mGlass:(u.type==='fillerU'?mCabDU:mCabU));
+      if(u.type!=='fillerU'&&!u.open&&!u.glass) doorFace(u.w-.5,u.h-3,u.x+.25,u.bottom+u.h/2,d,false,true,true); /* wall
         cabinet — hardware near the bottom edge, reachable from the floor, opposite a base cabinet's top-edge convention */
     }
     /* reveal accent — fills the thin gap between a storage wall's lower and
@@ -1453,11 +1483,11 @@ function draw3D(){
     function placeHandle2(w,h,t,yC,frontOff,left){ /* mirrors placeHandle — the island's
       door-facing side is the OPPOSITE direction (negative off), so the handle
       stands off the face toward frontOff-1.2, not +1.2 */
-      if(!r.fin.handle || w<5) return;
+      if(!r.fin.handleBase || w<5) return;
       const m = handleMul, hx = left ? t+Math.min(4.5,w*.18) : t+w-Math.min(4.5,w*.18),
         hy = yC+h*.24, hOff = frontOff-1.9;
-      if(r.fin.handle===1) put2(.55,4.5*m,.55, hx,hy,hOff, mHandle, false);
-      else if(r.fin.handle===2) put2(1.1*m,1.1*m,1.1*m, hx-.55*m,hy,hOff, mHandle, false);
+      if(r.fin.handleBase===1) put2(.55,4.5*m,.55, hx,hy,hOff, mHandle, false);
+      else if(r.fin.handleBase===2) put2(1.1*m,1.1*m,1.1*m, hx-.55*m,hy,hOff, mHandle, false);
       else put2(2.6*m,.55,.55, hx-2.6*m,hy,hOff, mHandle, false);
     }
     function doorFace2(w,h,t,yC,frontOff,handleLeft){
@@ -1608,7 +1638,10 @@ function buildSchedule(r){
   const order={Base:0,Tall:1,Wall:2};
   return {rows:Object.values(rows).sort((a,b)=>order[a.kind]-order[b.kind]||a.code.localeCompare(b.code)),baseLF,upperLF,tallN};
 }
-function finLine(r){ return `${DOORS[r.fin.door]} doors · ${CABCOL[r.fin.cab].n} · ${TOPCOL[r.fin.top].n}${TYPES[r.type].sinks[r.fin.sink]?' · '+TYPES[r.type].sinks[r.fin.sink]:''}`; }
+function finLine(r){
+  const cabLine = r.fin.cabBase===r.fin.cabUpper ? CABCOL[r.fin.cabBase].n : `${CABCOL[r.fin.cabBase].n} base / ${CABCOL[r.fin.cabUpper].n} upper`;
+  return `${DOORS[r.fin.door]} doors · ${cabLine} · ${TOPCOL[r.fin.top].n}${TYPES[r.type].sinks[r.fin.sink]?' · '+TYPES[r.type].sinks[r.fin.sink]:''}`;
+}
 /* shared by the Schedule tab, the on-screen Spec Sheet, and the print set,
    so the cabinet-list markup only lives in one place */
 function scheduleTableHtml(rows){
@@ -2933,15 +2966,19 @@ function buildSidebar(){
   <div class="sect"><h3>Finishes & options</h3>
     <div class="fld"><label>Door / panel style</label>
       <div class="segs" id="segDoor">${DOORS.map((d,i)=>`<button class="${r.fin.door===i?'on':''}" data-i="${i}">${d}</button>`).join('')}</div></div>
-    <div class="fld"><label>Cabinet color</label>
-      <div class="swrow" id="swCab">${CABCOL.map((s,i)=>`<div class="sw ${r.fin.cab===i?'on':''}" data-i="${i}"><div class="c" style="background:${s.h}"></div><div class="n">${s.n}</div></div>`).join('')}</div></div>
+    <div class="fld"><label>${hasUppers(r)?'Base cabinet finish':'Cabinet finish'}</label>
+      <div class="swrow" id="swCabBase">${CABCOL.map((s,i)=>`<div class="sw ${r.fin.cabBase===i?'on':''}" data-i="${i}"><div class="c" style="background:${s.h}"></div><div class="n">${s.n}</div></div>`).join('')}</div></div>
+    ${hasUppers(r)?`<div class="fld"><label>Upper cabinet finish</label>
+      <div class="swrow" id="swCabUpper">${CABCOL.map((s,i)=>`<div class="sw ${r.fin.cabUpper===i?'on':''}" data-i="${i}"><div class="c" style="background:${s.h}"></div><div class="n">${s.n}</div></div>`).join('')}</div></div>`:''}
     ${r.type!=='closet'?`<div class="fld"><label>Countertop</label>
       <div class="swrow" id="swTop">${TOPCOL.map((s,i)=>`<div class="sw ${r.fin.top===i?'on':''}" data-i="${i}"><div class="c" style="background:${s.h}"></div><div class="n">${s.n}</div></div>`).join('')}</div></div>`:''}
     ${t.sinks.length?`<div class="fld"><label>Sink style</label><select id="rSink">
       ${t.sinks.map((s,i)=>`<option value="${i}" ${r.fin.sink===i?'selected':''}>${s}</option>`).join('')}</select></div>`:''}
-    <div class="fld"><label>Cabinet hardware</label>
-      <div class="segs" id="segHandle">${HANDLES.map((d,i)=>`<button class="${r.fin.handle===i?'on':''}" data-i="${i}">${d}</button>`).join('')}</div></div>
-    ${r.fin.handle ? `
+    <div class="fld"><label>${hasUppers(r)?'Base cabinet hardware':'Cabinet hardware'}</label>
+      <div class="segs" id="segHandleBase">${HANDLES.map((d,i)=>`<button class="${r.fin.handleBase===i?'on':''}" data-i="${i}">${d}</button>`).join('')}</div></div>
+    ${hasUppers(r)?`<div class="fld"><label>Upper cabinet hardware</label>
+      <div class="segs" id="segHandleUpper">${HANDLES.map((d,i)=>`<button class="${r.fin.handleUpper===i?'on':''}" data-i="${i}">${d}</button>`).join('')}</div></div>`:''}
+    ${(r.fin.handleBase||r.fin.handleUpper) ? `
     <div class="fld"><label>Hardware finish</label>
       <div class="swrow" id="swHandle">${HANDLECOL.map((s,i)=>`<div class="sw ${r.fin.handleColor===i?'on':''}" data-i="${i}"><div class="c" style="background:${s.h}"></div><div class="n">${s.n}</div></div>`).join('')}</div></div>
     <div class="fld"><label>Hardware size</label>
@@ -3121,10 +3158,12 @@ function buildSidebar(){
     cfgObj.order=seq; buildSidebar(); render();
   }));
   $('segDoor').querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{r.fin.door=Number(b.dataset.i);buildSidebar();render();}));
-  $('swCab').querySelectorAll('.sw').forEach(s=>s.addEventListener('click',()=>{r.fin.cab=Number(s.dataset.i);buildSidebar();render();}));
+  $('swCabBase').querySelectorAll('.sw').forEach(s=>s.addEventListener('click',()=>{r.fin.cabBase=Number(s.dataset.i);buildSidebar();render();}));
+  const scu=$('swCabUpper'); if(scu) scu.querySelectorAll('.sw').forEach(s=>s.addEventListener('click',()=>{r.fin.cabUpper=Number(s.dataset.i);buildSidebar();render();}));
   const st=$('swTop'); if(st) st.querySelectorAll('.sw').forEach(s=>s.addEventListener('click',()=>{r.fin.top=Number(s.dataset.i);buildSidebar();render();}));
   const sk=$('rSink'); if(sk) sk.addEventListener('change',()=>{r.fin.sink=Number(sk.value);render();});
-  $('segHandle').querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{r.fin.handle=Number(b.dataset.i);buildSidebar();render();}));
+  $('segHandleBase').querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{r.fin.handleBase=Number(b.dataset.i);buildSidebar();render();}));
+  const shu=$('segHandleUpper'); if(shu) shu.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{r.fin.handleUpper=Number(b.dataset.i);buildSidebar();render();}));
   const sh=$('swHandle'); if(sh) sh.querySelectorAll('.sw').forEach(s=>s.addEventListener('click',()=>{r.fin.handleColor=Number(s.dataset.i);buildSidebar();render();}));
   const shs=$('segHandleSize'); if(shs) shs.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{r.fin.handleSize=Number(b.dataset.i);buildSidebar();render();}));
   const rfb=$('rFridgeBI'); if(rfb) rfb.addEventListener('change',()=>{r.fin.fridgeBuiltIn=rfb.checked;render();});
