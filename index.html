@@ -470,7 +470,7 @@ function buildFixed(cfg, defs, orderable){
    width conventions as the algorithmic engine above (buildFixed's defs,
    greedyFill's 'B'/'VB' base codes) so a manual item looks and schedules
    identically to an algorithmic one, just positioned/sized by hand */
-function manualCatalog(r){
+function manualCatalog(r, wallId){
   const cat = [{type:'base', label:r.type==='bath'?'Vanity base':'Base cabinet', codeBase:r.type==='bath'?'VB':'B', w:24}];
   if(r.type==='kitchen') cat.push(
     {type:'sink', label:'Sink', codeBase:'SB', w:SINK_W},
@@ -482,13 +482,13 @@ function manualCatalog(r){
     {type:'spice', label:'Spice pullout', codeBase:'SPC', w:9},
     {type:'ice', label:'Ice maker', codeBase:'ICE', w:15},
     {type:'corner', label:'Corner filler', codeBase:'CR', w:24, fixed:true},
-    {type:'tall', label:'Tall / pantry', codeBase:'T', w:18, tall:TALL_H}
+    {type:'tall', label:'Tall / pantry', codeBase:'T', w:18}
   );
   else if(r.type==='bath') cat.push(
     {type:'sink', label:'Vanity sink', codeBase:'VSB', w:36},
     {type:'gap', label:'Toilet space', codeBase:'WC', w:TOILET, fixed:true},
     {type:'trash', label:'Trash pullout', codeBase:'TRSH', w:12},
-    {type:'tall', label:'Linen tower', codeBase:'LIN', w:18, tall:TALL_H},
+    {type:'tall', label:'Linen tower', codeBase:'LIN', w:18},
     {type:'corner', label:'Corner filler', codeBase:'CR', w:24, fixed:true}
   );
   else if(r.type==='laundry') cat.push(
@@ -496,10 +496,12 @@ function manualCatalog(r){
     {type:'dryer', label:'Dryer', codeBase:'DRY', w:WD_W, fixed:true},
     {type:'sink', label:'Utility sink', codeBase:'SB', w:30},
     {type:'trash', label:'Trash pullout', codeBase:'TRSH', w:12},
-    {type:'tall', label:'Tall storage', codeBase:'T', w:18, tall:TALL_H},
+    {type:'tall', label:'Tall storage', codeBase:'T', w:18},
     {type:'corner', label:'Corner filler', codeBase:'CR', w:24, fixed:true}
   );
-  return cat;
+  /* a floor-to-ceiling unit doesn't make sense on a freestanding island —
+     it isn't against a wall, so there's nothing for it to reach up to */
+  return wallId==='ISLAND' ? cat.filter(c=>c.type!=='tall') : cat;
 }
 function newManualItem(entry, defaultD){
   const code = entry.fixed ? entry.codeBase : entry.codeBase+Math.round(entry.w);
@@ -507,6 +509,15 @@ function newManualItem(entry, defaultD){
 }
 function layoutWall(r, id){
   const L = Number(r.walls[id])||0, cfg = r.cfg[id]||{}, cr = corners(r,id);
+  /* a tall/tower/linen unit is floor-to-ceiling by definition — its height
+     always tracks the room's current ceiling/upper-cabinet line rather than
+     a fixed nominal number, so it can't drift out of sync (leaving a gap
+     above it, or poking past the ceiling) if the user changes ceiling
+     height or upper-cabinet height after the item was created. Applied to
+     every tall/tower item right before each return below, regardless of
+     which branch produced it. */
+  const tallH = Math.max(upperTop(r), Number(r.ceil)-3);
+  const normTall = list => { for(const it of list) if(it.type==='tall'||it.type==='tower') it.tall=tallH; return list; };
   if(r.type!=='closet' && cfg.manual && Array.isArray(cfg.manualItems) && cfg.manualItems.length){
     /* manual layout: the user owns every cabinet in this run directly — no
        algorithmic fill, no automatic corner filler, exact widths/depths as
@@ -515,9 +526,19 @@ function layoutWall(r, id){
        resizing a width the user explicitly typed in would defeat the point
        of this mode. Overflow/underflow is just surfaced, same warning UI
        the algorithmic walls already show. */
-    const items2 = cfg.manualItems.map(it=>({...it}));
+    const items2 = normTall(cfg.manualItems.map(it=>({...it})));
     let mx=0; for(const it of items2){ it.x=mx; mx+=it.w; }
-    const uppers2 = ride(items2);
+    /* uppers default to the same auto-generated set as an algorithmic wall
+       (ride()) unless the user has opted into customizing them individually
+       (cfg.manualUppers populated) — in which case that explicit list wins
+       entirely, positioned edge-to-edge the same way the base items are */
+    let uppers2;
+    if(Array.isArray(cfg.manualUppers) && cfg.manualUppers.length){
+      uppers2 = cfg.manualUppers.map(u=>({...u}));
+      let ux=0; for(const u of uppers2){ u.x=ux; ux+=u.w; }
+    } else {
+      uppers2 = ride(items2);
+    }
     const sum2 = items2.reduce((a,b)=>a+b.w,0);
     return {items:items2, uppers:uppers2, L: Math.max(L, sum2), overflow: Math.max(0, sum2-L)};
   }
@@ -644,7 +665,7 @@ function layoutWall(r, id){
   } else { /* closet */
     towerFill(usable, items, r);
     if(cr.end) items.push({code:'CR', w:24, type:'corner', label:'CNR'});
-    finish(items); const uppers = ride(items);
+    finish(items); normTall(items); const uppers = ride(items);
     const closetSum = items.reduce((a,b)=>a+b.w,0);
     return {items, uppers, L: Math.max(L, closetSum), overflow: Math.max(0, closetSum-L)};
   }
@@ -679,7 +700,7 @@ function layoutWall(r, id){
     : {code:'CR', w:24, type:'corner', label:'CNR'});
   if(endTall) items.push(endTall);
 
-  finish(items); const uppers = ride(items);
+  finish(items); normTall(items); const uppers = ride(items);
   /* if fixed-size fixtures (toilets, vanities, tall towers, corners) alone don't
      fit the entered wall length, there's no fillable item left to absorb the
      difference — grow the effective run length instead of silently overlapping
@@ -725,13 +746,24 @@ function layoutWall(r, id){
       let u = null;
       if(it.type==='corner') u = {code:'WC24', w:24, h:uH, bottom:uB, type:'cornerU', glass};
       else if(it.type==='ls') u = {code:'WC24'+r.upH, w:LS, h:uH, bottom:uB, type:'cornerU', glass};
-      else if(it.type==='range'){ const h=Math.max(12,uT-66); u={code:'W'+it.w+Math.round(h), w:it.w, h, bottom:66, type:'overRange'}; }
+      else if(it.type==='range'){
+        const hood = r.cfg[id]?.hood;
+        if(hood && hood.on){ /* a hood replaces the standard filler cabinet over the range —
+          centered on the range even when its width doesn't match, unlike every other
+          upper here which just lines up flush with what's below it */
+          u = {code:'HOOD'+Math.round(hood.w), w:hood.w, h:hood.h, bottom:hood.bottom, d:hood.d, type:'hood'};
+          /* clamped to the wall's own bounds — an oversized hood centered on
+             a range sitting near a corner would otherwise hang off the end
+             of the wall instead of just running past its neighbor */
+          u.x = Math.max(0, Math.min(it.x+(it.w-hood.w)/2, L-hood.w));
+        } else { const h=Math.max(12,uT-66); u={code:'W'+it.w+Math.round(h), w:it.w, h, bottom:66, type:'overRange'}; }
+      }
       else if(it.type==='fridge'){ if(!r.fin.fridgeBuiltIn){ const h=Math.max(12,uT-72); u={code:'W'+it.w+Math.round(h)+'-24D', w:it.w, h, bottom:72, type:'overRef'}; } /* else: the built-in fridge already extends its own matching panel up to uT — a separate overRef cabinet here would overlap it */ }
       else if(it.type==='tall'||it.type==='tower'||it.type==='rod') u = null; /* already floor-to-ceiling — no separate upper to stack on top */
       else if(it.type==='sink' && r.cfg[id]?.window) u = {code:'', w:it.w, h:0, bottom:uB, type:'window'};
       else if(it.type==='filler') u = {code:'F', w:it.w, h:uH, bottom:uB, type:'fillerU'};
       else u = {code:'W'+Math.round(it.w)+r.upH, w:it.w, h:uH, bottom:uB, type:'upper', glass};
-      if(u){ u.x = it.x; ups.push(u); }
+      if(u){ if(u.x===undefined) u.x = it.x; ups.push(u); }
     }
     return ups;
   }
@@ -978,10 +1010,12 @@ function drawElev(){
       c.strokeRect(x+w*.25,Yf(30),w*.5,15*s); c.beginPath();c.ellipse(x+w/2,Yf(9),w*.26,8*s,0,0,7);c.stroke();c.restore();
       txt(c,'W.C.',x+w/2,Yf(34)-14,13,'#5d6d80'); dimH(c,x,x+w,Yf(0)+34,fmt(it.w)+'"',15); continue; }
     if(it.type==='tall'||it.type==='tower'){
-      rect(c,x,Yf(it.tall),w,it.tall*s,2,'#1b2a3a',cabF);
-      if(it.type==='tower'){ for(let sh=12; sh<it.tall-6; sh+=12) line(c,x+3,Yf(sh),x+w-3,Yf(sh),1.3,'#00000033');
-        if(it.label==='DRW TWR') for(let sh=6; sh<=30; sh+=8) line(c,x+3,Yf(sh),x+w-3,Yf(sh),1.6,'#00000044'); }
-      else doorDetail(c,x,Yf(it.tall),w,it.tall*s,dstyle,s);
+      const th=it.tall-toe;
+      if(toe>0) rect(c,x+6,Yf(toe),w-12,toe*s,1.5,'#1b2a3a');
+      rect(c,x,Yf(it.tall),w,th*s,2,'#1b2a3a',cabF);
+      if(it.type==='tower'){ for(let sh=toe+12; sh<it.tall-6; sh+=12) line(c,x+3,Yf(sh),x+w-3,Yf(sh),1.3,'#00000033');
+        if(it.label==='DRW TWR') for(let sh=toe+6; sh<=toe+30; sh+=8) line(c,x+3,Yf(sh),x+w-3,Yf(sh),1.6,'#00000044'); }
+      else doorDetail(c,x,Yf(it.tall),w,th*s,dstyle,s);
       txt(c,it.label,x+w/2,Yf(it.tall+4)-12,13,'#5d6d80');
       dimH(c,x,x+w,Yf(0)+34,fmt(it.w)+'"',14); continue; }
     if(it.type==='rod'){ line(c,x+4,Yf(66),x+w-4,Yf(66),3,'#5d6d80');
@@ -1026,6 +1060,10 @@ function drawElev(){
     if(u.type==='tvNiche'){ rect(c,x,Yf(u.bottom+u.h),w,u.h*s,2,'#1b2a3a',cabF);
       rect(c,x+w*.08,Yf(u.bottom+u.h*.85),w*.84,u.h*.7*s,2,'#0b0b0d','#15151a');
       txt(c,'TV',x+w/2,Yf(u.bottom+u.h/2),16,'#fff'); continue; }
+    if(u.type==='hood'){ rect(c,x,Yf(u.bottom+u.h),w,u.h*s,2,'#1b2a3a','#f3e9e6');
+      const chimTop=Math.max(u.bottom+u.h,ceil-4), chimW=Math.max(6,u.w*.4)*s, chimX=x+(w-chimW)/2;
+      if(chimTop>u.bottom+u.h) rect(c,chimX,Yf(chimTop),chimW,(chimTop-(u.bottom+u.h))*s,2,'#1b2a3a','#f3e9e6');
+      txt(c,'HOOD',x+w/2,Yf(u.bottom+u.h/2),13,'#5d6d80'); continue; }
     if(u.h<=0) continue;
     rect(c,x,Yf(u.bottom+u.h),w,u.h*s,2,'#1b2a3a', u.glass?'#dceaf2':(u.type==='fillerU'?'#e6ebef':cabF));
     if(u.type!=='fillerU' && u.open){
@@ -1238,8 +1276,14 @@ function draw3D(){
       if(it.type==='washer'||it.type==='dryer'){put(it.w-1,WD_H,28,it.x+.5,WD_H/2,0,mAppl);continue;}
       if(it.type==='gap'){put(16,15,20,it.x+(it.w-16)/2,7.5,2,mAppl);put(14,14,7,it.x+(it.w-14)/2,22,0,mAppl);continue;}
       if(it.type==='tall'||it.type==='tower'){
-        put(it.w-.5,it.tall,bd,it.x+.25,it.tall/2,0,mCab);
-        if(it.type==='tall') doorFace(it.w-.5,it.tall-4,it.x+.25,it.tall/2,bd);
+        /* same toe-kick convention as a base cabinet — the door face sits up
+           on a recessed pedestal, not flush to the floor, so a tall/pantry
+           unit reads as part of the same run instead of looking like a
+           separate, mismatched block */
+        const tcd=it.d||bd, th=it.tall-r.toe, tyC=r.toe+th/2;
+        put(it.w-.5,th,tcd,it.x+.25,tyC,0,mCab);
+        if(it.type==='tall') doorFace(it.w-.5,th-4,it.x+.25,tyC,tcd);
+        if(r.toe>0) put(it.w-6,r.toe,tcd-3,it.x+3,r.toe/2,0,mCabD,false);
         continue; }
       if(it.type==='rod'){ /* open hang: rod cylinders */
         for(const hh of [66,33]){ const geo=new THREE.CylinderGeometry(.8,.8,it.w-2,10);
@@ -1314,9 +1358,21 @@ function draw3D(){
         put(u.w-7,u.h-7,.8,u.x+3.5,u.bottom+u.h/2,nd-2.2,mTV,false);
         continue;
       }
+      if(u.type==='hood'){ /* range hood — appliance-finish body (not a cabinet
+        door), a vent trim strip along the bottom front edge, and a slim
+        chimney duct rising to the ceiling line so it reads as a hood
+        silhouette instead of a plain box */
+        const hd=u.d||18, cy=u.bottom+u.h/2;
+        put(u.w-.5,u.h,hd,u.x+.25,cy,0,mAppl);
+        put(u.w-3,1,.6,u.x+1.5,u.bottom+2,hd-1,mTrim,false);
+        const chimTop=Math.max(u.bottom+u.h, ceil-4), chimW=Math.max(6,u.w*.4), chimD=hd*.6;
+        if(chimTop>u.bottom+u.h) put(chimW,chimTop-(u.bottom+u.h),chimD,u.x+(u.w-chimW)/2,(u.bottom+u.h+chimTop)/2,(hd-chimD)/2,mAppl);
+        continue;
+      }
       if(u.h<=0)continue;
-      const d=u.type==='overRef'?(u.deep?bd:24):(u.deep?bd:ud); /* a flush storage wall's uppers
-        match the base/fridge depth instead of a normal wall cabinet's shallower depth */
+      const d=u.d||(u.type==='overRef'?(u.deep?bd:24):(u.deep?bd:ud)); /* a flush storage wall's uppers
+        match the base/fridge depth instead of a normal wall cabinet's shallower depth;
+        u.d (Manual-layout uppers only) overrides both when the user set one explicitly */
       put(u.w-.5,u.h,d,u.x+.25,u.bottom+u.h/2,0, u.glass?mGlass:(u.type==='fillerU'?mCabD:mCab));
       if(u.type!=='fillerU'&&!u.open&&!u.glass) doorFace(u.w-.5,u.h-3,u.x+.25,u.bottom+u.h/2,d,false,true); /* wall
         cabinet — hardware near the bottom edge, reachable from the floor, opposite a base cabinet's top-edge convention */
@@ -1495,8 +1551,12 @@ function buildSchedule(r){
     if(id==='ISLAND') continue; /* islands have no upper cabinets — pendant lights instead, not part of the schedule */
     for(const u of (lay.uppers||[])){
       if(!u.code||u.code==='F'||u.h<=0||u.type==='mirror') continue;
-      const d=u.type==='overRef'?24:r.upD, k=u.code;
-      rows[k]=rows[k]||{code:k,kind:'Wall',w:u.w,h:u.h,d,qty:0,walls:new Set()};
+      const d=u.d||(u.type==='overRef'?24:r.upD);
+      /* same code+dimensions key as the base-cabinet rows above — a
+         Manual-layout upper with a custom height/depth/offset needs its
+         own schedule line, not to merge silently into a standard one */
+      const k=u.code+'|'+u.w+'|'+u.h+'|'+d;
+      rows[k]=rows[k]||{code:u.code,kind:'Wall',w:u.w,h:u.h,d,qty:0,walls:new Set()};
       rows[k].qty++; rows[k].walls.add(id); upperLF+=u.w;
     }
   }
@@ -2653,6 +2713,52 @@ function edgeFlushHtml(cfgObj, wallId){
     <option value="right" ${v==='right'?'selected':''}>Flush to right end (last fixture)</option>
   </select></div>`;
 }
+/* Manual-layout wall only: lets each upper cabinet get its own width, depth,
+   height, and vertical offset (instead of one auto-matched to whatever's
+   below it) — so one can sit shorter than, or offset from, its neighbor. */
+function uppersEditorHtml(r, wid){
+  const on = !!(r.cfg[wid].manualUppers && r.cfg[wid].manualUppers.length);
+  return `<div class="hint" style="margin-top:14px;font-weight:600;color:var(--ink)">Upper cabinets</div>
+  <label class="chk"><input type="checkbox" class="miUpToggle" data-wall="${wid}" ${on?'checked':''}>Customize upper cabinets individually</label>
+  ${on ? `
+  <div class="hint">Each upper gets its own width, depth, height, and height off the floor — set one shorter or offset from the rest.</div>
+  ${r.cfg[wid].manualUppers.map((u,idx)=>`
+    <div class="manualUpper" draggable="true" data-wall="${wid}" data-idx="${idx}" style="padding:6px 0;border-bottom:1px solid var(--line)">
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
+        <span style="cursor:grab;color:var(--dim)">⠿</span>
+        <input class="muLabel" data-wall="${wid}" data-idx="${idx}" value="${u.label}" style="flex:1;min-width:0">
+        <button class="muDel" data-wall="${wid}" data-idx="${idx}" title="Remove" style="padding:2px 7px">✕</button>
+      </div>
+      <div style="display:flex;gap:6px;padding-left:22px;align-items:flex-end">
+        <div style="width:44px"><label style="display:block;font:600 9px var(--sans);color:var(--dim)">W</label><input class="muW" type="number" step="0.5" min="1" data-wall="${wid}" data-idx="${idx}" value="${u.w}"></div>
+        <div style="width:44px"><label style="display:block;font:600 9px var(--sans);color:var(--dim)">D</label><input class="muD" type="number" step="0.5" min="1" data-wall="${wid}" data-idx="${idx}" value="${u.d}"></div>
+        <div style="width:44px"><label style="display:block;font:600 9px var(--sans);color:var(--dim)">H</label><input class="muH" type="number" step="0.5" min="1" data-wall="${wid}" data-idx="${idx}" value="${u.h}"></div>
+        <div style="width:56px"><label style="display:block;font:600 9px var(--sans);color:var(--dim)">Off floor</label><input class="muBottom" type="number" step="0.5" min="0" data-wall="${wid}" data-idx="${idx}" value="${u.bottom}"></div>
+        <div style="flex:1"><label style="display:block;font:600 9px var(--sans);color:var(--dim)">Style</label><select class="muStyle" data-wall="${wid}" data-idx="${idx}">
+          <option value="doors" ${!u.open&&!u.glass?'selected':''}>Doors</option>
+          <option value="glass" ${u.glass?'selected':''}>Glass front</option>
+          <option value="open" ${u.open?'selected':''}>Open shelf</option>
+        </select></div>
+      </div>
+    </div>`).join('')}
+  <div class="fld" style="margin-top:6px"><button class="muAdd" data-wall="${wid}" type="button">+ Add upper cabinet</button></div>
+  ` : ''}`;
+}
+/* shown wherever a wall currently has a range on it (checked in Countertop
+   mode, or a manual item in Manual mode) — a hood replaces the standard
+   filler cabinet ride() would otherwise put above the range */
+function hoodEditorHtml(r, wid){
+  const hd = (r.cfg[wid]&&r.cfg[wid].hood) || {on:false, w:RANGE_W, h:18, d:18, bottom:66};
+  return `<label class="chk"><input type="checkbox" class="hoodOn" data-wall="${wid}" ${hd.on?'checked':''}>Range hood (replaces the standard cabinet over the range)</label>
+  ${hd.on?`<div class="row2">
+    <div class="fld"><label>Hood width (in)</label><input type="number" step="0.5" min="12" class="hoodW" data-wall="${wid}" value="${hd.w}"></div>
+    <div class="fld"><label>Hood depth (in)</label><input type="number" step="0.5" min="6" class="hoodD" data-wall="${wid}" value="${hd.d}"></div>
+  </div>
+  <div class="row2">
+    <div class="fld"><label>Hood height (in)</label><input type="number" step="0.5" min="6" class="hoodH" data-wall="${wid}" value="${hd.h}"></div>
+    <div class="fld"><label>Mount height off floor (in)</label><input type="number" step="0.5" min="24" class="hoodBottom" data-wall="${wid}" value="${hd.bottom}"></div>
+  </div>`:''}`;
+}
 function buildSidebar(){
   const r=room(), t=TYPES[r.type], side=$('sidebar');
   const ids=wallIds(r);
@@ -2694,8 +2800,11 @@ function buildSidebar(){
         </div>`).join('')}
       <div class="fld" style="margin-top:8px"><label>Add to this wall</label><select class="miAdd" data-wall="${i}">
         <option value="">+ choose an item…</option>
-        ${manualCatalog(r).map((cent,ci)=>`<option value="${ci}">${cent.label} (${cent.w}")</option>`).join('')}
+        ${manualCatalog(r,i).map((cent,ci)=>`<option value="${ci}">${cent.label} (${cent.w}")</option>`).join('')}
       </select></div>
+      ${hasUppers(r) ? uppersEditorHtml(r,i) : ''}
+      ${r.type==='kitchen' && !(r.cfg[i].manualUppers&&r.cfg[i].manualUppers.length) && (r.cfg[i].manualItems||[]).some(x=>x.type==='range') ? hoodEditorHtml(r,i) : ''}
+      ${r.type==='kitchen' && r.cfg[i].manualUppers&&r.cfg[i].manualUppers.length && r.cfg[i].manualUppers.some(u=>u.type==='hood') ? `<div class="hint">This wall's hood is now its own item in the upper-cabinets list above — edit its width/depth/height/offset there.</div>` : ''}
       ` : stw ? `
       <div class="fld"><label>Cabinet style</label><select class="stgStyle" data-wall="${i}">
         ${[['doors','Doors'],['drawers','Drawers below, doors above'],['open','Open shelving'],['glass','Glass-front uppers']]
@@ -2717,7 +2826,8 @@ function buildSidebar(){
       ${orderRowsHtml(t, r.cfg[i]||{}, i)}
       ${Object.keys(t.fixtures).some(k=>r.cfg[i]&&r.cfg[i][k]) ? edgeFlushHtml(r.cfg[i]||{}, i) : ''}
       ${['sink','vanity','vanity2'].some(k=>r.cfg[i]&&r.cfg[i][k]) ? `<label class="chk"><input type="checkbox" class="lowerCounter" data-wall="${i}" ${r.cfg[i]&&r.cfg[i].lowerCounter?'checked':''}>Lowered counter next to sink (keeps water off the main surface)</label>` : ''}
-      ${hasUppers(r) ? `<label class="chk"><input type="checkbox" class="upGlass" data-wall="${i}" ${r.cfg[i]&&r.cfg[i].upperGlass?'checked':''}>Glass-front upper cabinets</label>` : ''}`}
+      ${hasUppers(r) ? `<label class="chk"><input type="checkbox" class="upGlass" data-wall="${i}" ${r.cfg[i]&&r.cfg[i].upperGlass?'checked':''}>Glass-front upper cabinets</label>` : ''}
+      ${r.type==='kitchen' && r.cfg[i]&&r.cfg[i].range ? hoodEditorHtml(r,i) : ''}`}
       ${ov>0.5?`<div class="hint" style="color:var(--dim);font-weight:600">⚠ These items need ~${fmt(Number(r.walls[i])+ov)}" — wall is only ${fmt(r.walls[i])}". Remove/shrink an item${man?'':', add a linen/tall elsewhere,'} or lengthen this wall.</div>`:''}
     </div>`;
     }).join('')}
@@ -2764,7 +2874,7 @@ function buildSidebar(){
           </div>`).join('')}
         <div class="fld" style="margin-top:8px"><label>Add to island</label><select class="miAdd" data-wall="ISLAND">
           <option value="">+ choose an item…</option>
-          ${manualCatalog(r).map((cent,ci)=>`<option value="${ci}">${cent.label} (${cent.w}")</option>`).join('')}
+          ${manualCatalog(r,'ISLAND').map((cent,ci)=>`<option value="${ci}">${cent.label} (${cent.w}")</option>`).join('')}
         </select></div>
         ` : `
         ${Object.entries(t.fixtures).filter(([k])=>k!=='window').map(([k,name])=>`<label class="chk"><input type="checkbox" class="wFix" data-wall="ISLAND" data-k="${k}" ${r.cfg.ISLAND&&r.cfg.ISLAND[k]?'checked':''}>${name}</label>`).join('')}
@@ -2814,7 +2924,7 @@ function buildSidebar(){
   }));
   side.querySelectorAll('.miAdd').forEach(el=>el.addEventListener('change',()=>{
     const wid=el.dataset.wall; if(el.value==='') return;
-    const entry=manualCatalog(r)[Number(el.value)];
+    const entry=manualCatalog(r,wid)[Number(el.value)];
     r.cfg[wid]=r.cfg[wid]||{manual:true}; r.cfg[wid].manualItems=r.cfg[wid].manualItems||[];
     r.cfg[wid].manualItems.push(newManualItem(entry, wid==='ISLAND'?r.island.depth:r.baseD));
     buildSidebar(); render();
@@ -2848,6 +2958,69 @@ function buildSidebar(){
       miDragFrom=null; buildSidebar(); render();
     });
   });
+  side.querySelectorAll('.miUpToggle').forEach(el=>el.addEventListener('change',()=>{
+    const wid=el.dataset.wall; r.cfg[wid]=r.cfg[wid]||{};
+    if(el.checked){
+      if(!r.cfg[wid].manualUppers || !r.cfg[wid].manualUppers.length){
+        /* seed from whatever's auto-generated right now, so the user is
+           editing a sensible starting layout instead of an empty list —
+           window/mirror/TV-niche markers are excluded, they aren't real
+           purchasable cabinets */
+        const auto=(layoutWall(r,wid).uppers||[]).filter(u=>u.h>0 && !['mirror','window','tvNiche'].includes(u.type));
+        r.cfg[wid].manualUppers = auto.map(u=>({key:genId(), code:u.code||('W'+Math.round(u.w)+Math.round(u.h)),
+          label:u.type==='hood'?'Range hood':(u.code||'UPPER'), w:u.w, d:u.d||(u.deep?r.baseD:(u.type==='overRef'?24:r.upD)), h:u.h, bottom:u.bottom,
+          glass:!!u.glass, open:!!u.open, type:u.type==='hood'?'hood':undefined}));
+      }
+    } else {
+      r.cfg[wid].manualUppers = [];
+    }
+    buildSidebar(); render();
+  }));
+  side.querySelectorAll('.muAdd').forEach(el=>el.addEventListener('click',()=>{
+    const wid=el.dataset.wall; r.cfg[wid].manualUppers=r.cfg[wid].manualUppers||[];
+    const h=Number(r.upH)||30;
+    r.cfg[wid].manualUppers.push({key:genId(), code:'W24'+Math.round(h), label:'Upper cabinet', w:24, d:r.upD, h, bottom:upperBottom(r), glass:false, open:false});
+    buildSidebar(); render();
+  }));
+  side.querySelectorAll('.muLabel').forEach(el=>el.addEventListener('input',()=>{
+    const u=r.cfg[el.dataset.wall].manualUppers[Number(el.dataset.idx)]; u.label=el.value||u.label; render();
+  }));
+  side.querySelectorAll('.muW').forEach(el=>el.addEventListener('input',()=>{
+    const u=r.cfg[el.dataset.wall].manualUppers[Number(el.dataset.idx)];
+    u.w=Math.max(1,Number(el.value)||u.w);
+    u.code=u.code.replace(/[\d.]+$/, String(Math.round(u.w))); render();
+  }));
+  side.querySelectorAll('.muD').forEach(el=>el.addEventListener('input',()=>{
+    const wid=el.dataset.wall, u=r.cfg[wid].manualUppers[Number(el.dataset.idx)];
+    u.d=Math.max(1,Number(el.value)||r.upD); render();
+  }));
+  side.querySelectorAll('.muH').forEach(el=>el.addEventListener('input',()=>{
+    const u=r.cfg[el.dataset.wall].manualUppers[Number(el.dataset.idx)];
+    u.h=Math.max(1,Number(el.value)||u.h); render();
+  }));
+  side.querySelectorAll('.muBottom').forEach(el=>el.addEventListener('input',()=>{
+    const u=r.cfg[el.dataset.wall].manualUppers[Number(el.dataset.idx)];
+    u.bottom=Math.max(0,Number(el.value)||0); render();
+  }));
+  side.querySelectorAll('.muStyle').forEach(el=>el.addEventListener('change',()=>{
+    const u=r.cfg[el.dataset.wall].manualUppers[Number(el.dataset.idx)];
+    u.glass = el.value==='glass'; u.open = el.value==='open'; render();
+  }));
+  side.querySelectorAll('.muDel').forEach(el=>el.addEventListener('click',()=>{
+    r.cfg[el.dataset.wall].manualUppers.splice(Number(el.dataset.idx),1); buildSidebar(); render();
+  }));
+  let muDragFrom=null;
+  side.querySelectorAll('.manualUpper').forEach(el=>{
+    el.addEventListener('dragstart',()=>{ muDragFrom={wall:el.dataset.wall, idx:Number(el.dataset.idx)}; });
+    el.addEventListener('dragover',e=>e.preventDefault());
+    el.addEventListener('drop',e=>{
+      e.preventDefault();
+      if(!muDragFrom || muDragFrom.wall!==el.dataset.wall) return;
+      const list=r.cfg[el.dataset.wall].manualUppers, to=Number(el.dataset.idx);
+      const [moved]=list.splice(muDragFrom.idx,1); list.splice(to,0,moved);
+      muDragFrom=null; buildSidebar(); render();
+    });
+  });
   side.querySelectorAll('.stgStyle').forEach(el=>el.addEventListener('change',()=>{
     r.storageStyle=r.storageStyle||{}; r.storageStyle[el.dataset.wall]=el.value; render();
   }));
@@ -2868,6 +3041,24 @@ function buildSidebar(){
   }));
   side.querySelectorAll('.upGlass').forEach(el=>el.addEventListener('change',()=>{
     r.cfg[el.dataset.wall]=r.cfg[el.dataset.wall]||{}; r.cfg[el.dataset.wall].upperGlass=el.checked; render();
+  }));
+  side.querySelectorAll('.hoodOn').forEach(el=>el.addEventListener('change',()=>{
+    const wid=el.dataset.wall; r.cfg[wid]=r.cfg[wid]||{};
+    r.cfg[wid].hood = r.cfg[wid].hood || {w:RANGE_W, h:18, d:18, bottom:66};
+    r.cfg[wid].hood.on = el.checked;
+    buildSidebar(); render();
+  }));
+  side.querySelectorAll('.hoodW').forEach(el=>el.addEventListener('input',()=>{
+    r.cfg[el.dataset.wall].hood.w=Math.max(6,Number(el.value)||RANGE_W); render();
+  }));
+  side.querySelectorAll('.hoodD').forEach(el=>el.addEventListener('input',()=>{
+    r.cfg[el.dataset.wall].hood.d=Math.max(4,Number(el.value)||18); render();
+  }));
+  side.querySelectorAll('.hoodH').forEach(el=>el.addEventListener('input',()=>{
+    r.cfg[el.dataset.wall].hood.h=Math.max(4,Number(el.value)||18); render();
+  }));
+  side.querySelectorAll('.hoodBottom').forEach(el=>el.addEventListener('input',()=>{
+    r.cfg[el.dataset.wall].hood.bottom=Math.max(1,Number(el.value)||66); render();
   }));
   side.querySelectorAll('.lowerCounter').forEach(el=>el.addEventListener('change',()=>{
     r.cfg[el.dataset.wall]=r.cfg[el.dataset.wall]||{}; r.cfg[el.dataset.wall].lowerCounter=el.checked; render();
