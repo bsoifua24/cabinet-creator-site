@@ -183,6 +183,21 @@
   </div>
 </div>
 
+<div class="modal-overlay" id="calModal">
+  <div class="modal" style="width:min(900px,94vw)">
+    <div class="modal-head"><h3>Manual calibration</h3><button id="calClose">&times;</button></div>
+    <div class="modal-body">
+      <p class="hint" id="calInstructions">Click two points on the drawing that you know the real-world distance between — the ends of a dimensioned wall are usually easiest — then enter that distance.</p>
+      <div style="overflow:auto;max-height:60vh;border:1px solid var(--line)"><canvas id="calCanvas" style="display:block;max-width:100%;height:auto;cursor:crosshair"></canvas></div>
+      <div class="row2" style="margin-top:10px;align-items:end">
+        <div class="fld"><label>Real-world distance between the two points</label><input id="calDistIn" type="number" step="0.125" placeholder="e.g. 150 for 12'-6&quot;"></div>
+        <button class="primary" id="calSave">Save calibration</button>
+      </div>
+      <p class="hint" id="calPointsHint">Point A: not set · Point B: not set</p>
+    </div>
+  </div>
+</div>
+
 <div class="pagenav">
   <button class="on" data-p="pImport">1 · Import plans</button>
   <button data-p="pDesign">2 · Designer</button>
@@ -197,6 +212,13 @@
         <span style="font-size:11px">JPG · PNG · WEBP · PDF — include the dimensioned floor plan for each room</span></div>
       <input type="file" id="planIn" accept="image/jpeg,image/png,image/webp,application/pdf" multiple hidden>
       <div class="filelist" id="planList"></div>
+    </div>
+
+    <div class="card" id="calCard" style="display:none">
+      <h2>Scale calibration <span style="font:600 11px var(--mono);color:var(--ink-soft)">— plan-takeoff engine, step 1</span></h2>
+      <p style="font-size:13px;color:var(--ink-soft);margin-bottom:12px">Every measurement the automated engine extracts later depends on this being right first. Nothing downstream runs until a page is calibrated.</p>
+      <button class="ghost" id="btnLoadCalPages">Load PDF pages for calibration</button>
+      <div id="calList" style="margin-top:12px"></div>
     </div>
 
     <div class="card">
@@ -260,6 +282,7 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 <script>
 if(window.pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 </script>
@@ -429,7 +452,7 @@ function newRoom(type, name, category){
    a project save/reload instead of silently disappearing the moment you
    navigate away or reopen a saved project, which made it impossible to go
    back and check what the AI actually said after the fact */
-const state = { rooms:[newRoom('kitchen')], active:0, sourcePages:[], lastTakeoffJson:'' };
+const state = { rooms:[newRoom('kitchen')], active:0, sourcePages:[], lastTakeoffJson:'', pageScales:{} };
 const room = () => state.rooms[state.active];
 const wallIds = r => (r=r||room(), r.shape==='single'?['A']:r.shape==='U'?['A','B','C']:['A','B']);
 const counterH = r => (r=r||room(), r.baseH + r.ctT);
@@ -2594,7 +2617,9 @@ $('drop').addEventListener('click',()=>$('planIn').click());
 }));
 $('planIn').addEventListener('change',e=>{addPlans(e.target.files);e.target.value='';});
 function addPlans(fl){ for(const f of fl) planFiles.push(f);
-  $('planList').innerHTML=planFiles.map(f=>`<span>${f.name}</span>`).join(''); }
+  $('planList').innerHTML=planFiles.map(f=>`<span>${f.name}</span>`).join('');
+  $('calCard').style.display = planFiles.some(f=>f.type==='application/pdf') ? '' : 'none';
+}
 function b64(file){ return new Promise((res,rej)=>{const r=new FileReader();
   r.onload=()=>res(r.result.split(',')[1]); r.onerror=rej; r.readAsDataURL(file);}); }
 function setStatus(msg, isErr){ const el=$('aiStatus'); el.textContent=msg; el.style.color=isErr?'var(--dim)':''; el.style.fontWeight=isErr?'700':''; }
@@ -2688,6 +2713,405 @@ function cropCanvas(cv, bbox, margin=0.08){
   return out;
 }
 function canvasJpeg(cv,q){ return cv.toDataURL('image/jpeg',q).split(',')[1]; }
+
+/* ================= PLAN-TAKEOFF ENGINE — STEP 1: SCALE CALIBRATION =================
+   Foundation for the new deterministic (non-AI) plan-reading pipeline described
+   separately from the existing AI-vision takeoff above — this doesn't touch that
+   pipeline at all, it's a standalone tool building toward replacing/feeding it.
+   Every later step (vector wall/room extraction, cabinet-run solving) depends on
+   knowing real-world inches per rendered pixel for each sheet. Three independent
+   sources are cross-checked; if they don't agree within 2%, or none are found,
+   manual two-point calibration is required before the page is usable downstream. */
+
+/* ---- dimension & scale-note text parsing ---- */
+/* Parses an architectural dimension string into total inches. Handles
+   12'-6"  3'-0"  5'-10 1/2"  24"  2'-4 3/8"  10'6"  6'-0 1/4"  12'
+   Returns null for EQ/VARIES/TYP and anything else that isn't a clean
+   dimension — callers must treat null as "not a dimension", not zero. */
+function parseDimensionText(raw){
+  if(!raw) return null;
+  const s = raw.trim().toUpperCase().replace(/[′″]/g, m=>m==='′'?"'":'"');
+  if(/^(EQ\.?|EQUAL|VARIES|VIF|TYP\.?|N\.?I\.?C\.?|CLR\.?)$/.test(s)) return null;
+  let m = s.match(/^(\d+)\s*'\s*-?\s*(\d+(?:\s+\d+\/\d+)?|\d*\/\d+)?\s*"?$/);
+  if(m){
+    const ft = Number(m[1]);
+    let inches = 0;
+    if(m[2]){
+      const inPart = m[2].trim();
+      const mixed = inPart.match(/^(\d+)\s+(\d+)\/(\d+)$/);
+      const fracOnly = inPart.match(/^(\d+)\/(\d+)$/);
+      if(mixed) inches = Number(mixed[1]) + Number(mixed[2])/Number(mixed[3]);
+      else if(fracOnly) inches = Number(fracOnly[1])/Number(fracOnly[2]);
+      else inches = Number(inPart);
+    }
+    return ft*12 + inches;
+  }
+  m = s.match(/^(\d+)?\s*(\d+\/\d+)?\s*"$/);
+  if(m && (m[1]||m[2])){
+    let v = m[1]?Number(m[1]):0;
+    if(m[2]){ const [n,d]=m[2].split('/').map(Number); v += n/d; }
+    return v;
+  }
+  m = s.match(/^(\d+)\s*'$/);
+  if(m) return Number(m[1])*12;
+  return null;
+}
+/* Parses a title-block scale note into {num,den} meaning num/den drawing-
+   inches = 1 real foot. Handles fractional (3/16"=1'-0"), whole-inch
+   (3"=1'-0"), and engineering/site scales (1"=20'). */
+function parseArchScale(text){
+  if(!text) return null;
+  const s = text.toUpperCase();
+  let m = s.match(/(\d+)\s*\/\s*(\d+)\s*"\s*=\s*1\s*'\s*-?\s*0?\s*"?/);
+  if(m) return {num:Number(m[1]), den:Number(m[2])};
+  m = s.match(/(\d+)\s*"\s*=\s*1\s*'\s*-?\s*0?\s*"?/);
+  if(m) return {num:Number(m[1]), den:1};
+  m = s.match(/1\s*"\s*=\s*(\d+)\s*'/);
+  if(m) return {num:1, den:Number(m[1])};
+  return null;
+}
+const STANDARD_ARCH_SCALES = [
+  {num:1,den:8},{num:3,den:16},{num:1,den:4},{num:3,den:8},{num:1,den:2},
+  {num:3,den:4},{num:1,den:1},{num:1.5,den:1},{num:3,den:1}
+];
+function nearestStandardScale(pxPerInch, pxPerPt){
+  const implied = pxPerInch/(pxPerPt*6); /* drawing-inches per real foot */
+  let best=null, bestDiff=Infinity;
+  for(const sc of STANDARD_ARCH_SCALES){
+    const diff = Math.abs(sc.num/sc.den - implied)/implied;
+    if(diff<bestDiff){ bestDiff=diff; best=sc; }
+  }
+  return best;
+}
+function median(arr){
+  if(!arr.length) return null;
+  const s=[...arr].sort((a,b)=>a-b), mid=Math.floor(s.length/2);
+  return s.length%2 ? s[mid] : (s[mid-1]+s[mid])/2;
+}
+
+/* ---- vector geometry extraction (pdf.js getOperatorList) ----
+   This is the least-verified part of Step 1 — the operator-list format is
+   meant to feed pdf.js's own renderer, not external geometry consumers, and
+   there's no way to visually confirm this against a real sheet from this
+   environment. Wrapped in try/catch throughout so a failure here just means
+   "no vector samples", never a crash or bad data poisoning the reconciliation. */
+function matMul(m1,m2){
+  return [
+    m1[0]*m2[0]+m1[1]*m2[2], m1[0]*m2[1]+m1[1]*m2[3],
+    m1[2]*m2[0]+m1[3]*m2[2], m1[2]*m2[1]+m1[3]*m2[3],
+    m1[4]*m2[0]+m1[5]*m2[2]+m2[4], m1[4]*m2[1]+m1[5]*m2[3]+m2[5]
+  ];
+}
+function matApply(m,x,y){ return [m[0]*x+m[2]*y+m[4], m[1]*x+m[3]*y+m[5]]; }
+/* Walks the operator list to find straight 2-point sub-paths that get
+   stroked (painted), in PAGE-space PDF points (not rendered pixels — this
+   stays resolution-independent). Records the dash pattern active at draw
+   time too, since Step 2 needs it (dashed = upper cabinet) even though
+   Step 1 only uses segment length/position. */
+async function extractVectorLines(page){
+  const segs = [];
+  try{
+    const opList = await page.getOperatorList();
+    const OPS = pdfjsLib.OPS;
+    const stack = [];
+    let ctm=[1,0,0,1,0,0], dash=null, lineWidth=1, pendingPath=null;
+    for(let i=0;i<opList.fnArray.length;i++){
+      const fn=opList.fnArray[i], args=opList.argsArray[i];
+      if(fn===OPS.save){ stack.push({ctm,dash,lineWidth}); }
+      else if(fn===OPS.restore){ const s2=stack.pop(); if(s2){ctm=s2.ctm;dash=s2.dash;lineWidth=s2.lineWidth;} }
+      else if(fn===OPS.transform){ ctm=matMul([args[0],args[1],args[2],args[3],args[4],args[5]], ctm); }
+      else if(fn===OPS.setDash){ dash=args[0]; }
+      else if(fn===OPS.setLineWidth){ lineWidth=args[0]; }
+      else if(fn===OPS.constructPath){
+        const ops=args[0], coords=args[1];
+        let ci=0; const pts=[];
+        for(const op of ops){
+          if(op===OPS.moveTo || op===OPS.lineTo){ pts.push(matApply(ctm, coords[ci], coords[ci+1])); ci+=2; }
+          else if(op===OPS.curveTo){ ci+=6; pts.push(null); }
+          else if(op===OPS.closePath){ /* no coords */ }
+        }
+        pendingPath = {pts, dash:dash?[...dash]:null, lineWidth};
+      }
+      else if(fn===OPS.stroke || fn===OPS.closeStroke){
+        if(pendingPath){
+          for(let k=0;k<pendingPath.pts.length-1;k++){
+            const p1=pendingPath.pts[k], p2=pendingPath.pts[k+1];
+            if(!p1||!p2) continue;
+            const len=Math.hypot(p2[0]-p1[0], p2[1]-p1[1]);
+            if(len>2) segs.push({x1:p1[0],y1:p1[1],x2:p2[0],y2:p2[1],len,dash:pendingPath.dash,lineWidth:pendingPath.lineWidth});
+          }
+        }
+      }
+    }
+  }catch(e){ console.error('vector line extraction failed', e); }
+  return segs;
+}
+/* Source (b): finds dimension-format text via getTextContent(), pairs each
+   with the nearest axis-aligned candidate line, and returns per-pair
+   points-per-inch ratios. Deliberately simplified vs the full dimension-
+   line/witness-line binding Step 3 will do (arrow terminators, witness
+   line association) — good enough as an independent cross-check now,
+   gets more accurate once Step 3's real parser exists. */
+async function extractVectorScaleSamples(lines, textContent){
+  const samples = [];
+  try{
+    const dimTexts = [];
+    for(const item of textContent.items){
+      const val = parseDimensionText(item.str);
+      if(val==null || val<=0) continue;
+      dimTexts.push({val, x:item.transform[4], y:item.transform[5]});
+    }
+    const candidateLines = lines.filter(l=>{
+      const dx=Math.abs(l.x2-l.x1), dy=Math.abs(l.y2-l.y1);
+      const axisAligned = dx<1 || dy<1 || Math.min(dx,dy)/Math.max(dx,dy,1)<0.02;
+      return axisAligned && l.len>20;
+    });
+    for(const dt of dimTexts){
+      let best=null, bestDist=Infinity;
+      for(const l of candidateLines){
+        const mx=(l.x1+l.x2)/2, my=(l.y1+l.y2)/2;
+        const d=Math.hypot(mx-dt.x, my-dt.y);
+        if(d<bestDist){ bestDist=d; best=l; }
+      }
+      if(best && bestDist < Math.max(60, best.len*0.6)){
+        samples.push({ptsPerInch: best.len/dt.val, dimValue:dt.val, lineLen:best.len});
+      }
+    }
+  }catch(e){ console.error('vector scale sampling failed', e); }
+  return samples;
+}
+/* Source (c): a graphic scale bar's tick marks — short, evenly-spaced,
+   parallel lines near a numeric label. The weakest of the 3 sources (scale
+   bars vary a lot in drafting style); expected to often come back empty,
+   which is fine — reconciliation only needs 1-2 of the 3 to succeed. */
+async function detectGraphicScaleBar(lines, textContent){
+  try{
+    const ticks = lines.filter(l=>l.len>2 && l.len<20 && Math.abs(l.x2-l.x1)<Math.abs(l.y2-l.y1));
+    if(ticks.length<4) return null;
+    const pts = ticks.map(l=>({x:(l.x1+l.x2)/2, y:(l.y1+l.y2)/2})).sort((a,b)=>a.x-b.x);
+    let bestRun=[pts[0]], curRun=[pts[0]];
+    for(let i=1;i<pts.length;i++){
+      const gap=pts[i].x-pts[i-1].x;
+      const prevGap=curRun.length>1 ? curRun[curRun.length-1].x-curRun[curRun.length-2].x : gap;
+      if(gap>2 && Math.abs(gap-prevGap)/prevGap<0.15 && Math.abs(pts[i].y-pts[i-1].y)<5) curRun.push(pts[i]);
+      else curRun=[pts[i]];
+      if(curRun.length>bestRun.length) bestRun=curRun;
+    }
+    if(bestRun.length<4) return null;
+    const avgGap=(bestRun[bestRun.length-1].x-bestRun[0].x)/(bestRun.length-1);
+    const nearLabel = textContent.items.find(it=>{
+      const val=parseDimensionText(it.str);
+      return val!=null && Math.abs(it.transform[4]-bestRun[0].x)<avgGap*1.5 && Math.abs(it.transform[5]-bestRun[0].y)<30;
+    });
+    if(!nearLabel) return null;
+    const incrementIn = parseDimensionText(nearLabel.str);
+    if(!incrementIn) return null;
+    return {ptsPerInch: avgGap/incrementIn, tickCount:bestRun.length};
+  }catch(e){ console.error('scale bar detection failed', e); }
+  return null;
+}
+
+/* ---- title-block OCR (Tesseract.js) ---- */
+let tesseractWorkerPromise = null;
+function getTesseractWorker(){
+  if(!tesseractWorkerPromise) tesseractWorkerPromise = Tesseract.createWorker('eng');
+  return tesseractWorkerPromise;
+}
+/* Title blocks aren't universally positioned — tries the bottom-right
+   corner (most common) then a full right-side strip before giving up. */
+async function ocrTitleBlockScale(fullCanvas){
+  try{
+    const worker = await getTesseractWorker();
+    const regions = [[0.68,0.78,1,1], [0.82,0,1,1]];
+    for(const rgn of regions){
+      const crop = cropCanvas(fullCanvas, rgn, 0.02);
+      const {data} = await worker.recognize(crop);
+      const ratio = parseArchScale(data.text);
+      if(ratio) return {ratio, ocrText:data.text.slice(0,4000)};
+    }
+  }catch(e){ console.error('title-block OCR failed', e); }
+  return null;
+}
+
+/* ---- orchestration + reconciliation ---- */
+function reconcileScale(results, meta){
+  const vals = Object.entries(results).map(([k,v])=>({source:k, pxPerInch:v.pxPerInch}));
+  if(!vals.length) return {pxPerInch:null, source:'none', confidence:'none', sheetScaleRatio:null, sources:results, meta, needsManual:true};
+  if(vals.length===1){
+    const nearest = nearestStandardScale(vals[0].pxPerInch, meta.pxPerPt);
+    return {pxPerInch:vals[0].pxPerInch, source:vals[0].source, confidence:'medium',
+      sheetScaleRatio: results.ocr?.ratio || nearest, sources:results, meta, needsManual:false};
+  }
+  const pxVals = vals.map(v=>v.pxPerInch), mx=Math.max(...pxVals), mn=Math.min(...pxVals);
+  const spread = (mx-mn)/mn, med = median(pxVals);
+  const nearest = nearestStandardScale(med, meta.pxPerPt);
+  if(spread<=0.02){
+    return {pxPerInch:med, source:'reconciled('+vals.map(v=>v.source).join('+')+')', confidence:'high',
+      sheetScaleRatio: results.ocr?.ratio || nearest, sources:results, meta, needsManual:false, spread};
+  }
+  const preferred = results.ocr ? results.ocr.pxPerInch : med;
+  return {pxPerInch:preferred, source:'disagreement', confidence:'low',
+    sheetScaleRatio: results.ocr?.ratio || nearest, sources:results, meta, needsManual:true, spread};
+}
+async function calibratePage(pdf, pageNum, statusCb){
+  const page = await pdf.getPage(pageNum);
+  const vp = page.getViewport({scale:1}); /* scale:1 viewport IS in PDF points */
+  const renderMaxDim = 2200;
+  const pxPerPt = renderMaxDim/Math.max(vp.width, vp.height);
+
+  statusCb && statusCb('Reading title block (OCR)…');
+  const fullCanvas = await renderPdfPage(pdf, pageNum, renderMaxDim);
+  const results = {};
+  const ocr = await ocrTitleBlockScale(fullCanvas);
+  if(ocr) results.ocr = {pxPerInch: pxPerPt*72*(ocr.ratio.num/ocr.ratio.den)/12, ratio:ocr.ratio, ocrText:ocr.ocrText};
+
+  statusCb && statusCb('Extracting vector geometry…');
+  const [lines, textContent] = await Promise.all([extractVectorLines(page), page.getTextContent()]);
+
+  statusCb && statusCb('Measuring dimension strings (vector)…');
+  const vecSamples = await extractVectorScaleSamples(lines, textContent);
+  if(vecSamples.length){
+    const ptsPerInch = median(vecSamples.map(s=>s.ptsPerInch));
+    results.vector = {pxPerInch: pxPerPt*ptsPerInch, sampleCount:vecSamples.length};
+  }
+
+  statusCb && statusCb('Looking for a graphic scale bar…');
+  const bar = await detectGraphicScaleBar(lines, textContent);
+  if(bar) results.scaleBar = {pxPerInch: pxPerPt*bar.ptsPerInch, tickCount:bar.tickCount};
+
+  const resolved = reconcileScale(results, {pxPerPt, renderMaxDim, pageW:vp.width, pageH:vp.height});
+  resolved.pageNum = pageNum;
+  resolved.calibratedAt = Date.now();
+  return resolved;
+}
+
+/* ---- UI ---- */
+let calPdfDocs = []; /* [{file, pdf, numPages}] loaded lazily, only once "Load PDF pages" is clicked */
+function scaleConfBadge(conf){
+  const c = conf==='high'?'#2f8a72':conf==='medium'?'#b8862e':conf==='low'?'#c4452c':'#9aa4af';
+  const label = {high:'HIGH',medium:'MEDIUM',low:'LOW — disagreement',none:'NOT CALIBRATED'}[conf]||conf.toUpperCase();
+  return `<span style="display:inline-block;padding:2px 8px;border-radius:3px;font:700 10px var(--mono);letter-spacing:.05em;background:${c};color:#fff">${label}</span>`;
+}
+function scaleRatioText(ratio){
+  if(!ratio) return '—';
+  return (Number.isInteger(ratio.num)?ratio.num:ratio.num.toFixed(1))+'/'+ratio.den+'" = 1\'-0"';
+}
+function renderCalList(){
+  const list = $('calList');
+  if(!calPdfDocs.length){ list.innerHTML=''; return; }
+  let html='';
+  for(const doc of calPdfDocs){
+    for(let p=1; p<=doc.numPages; p++){
+      const key=doc.file.name+'#'+p;
+      const res = state.pageScales[key];
+      html += `<div class="wallcard" style="margin-bottom:8px" data-calkey="${key}">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
+          <div><b>${doc.file.name}</b> — page ${p}</div>
+          ${res ? scaleConfBadge(res.confidence) : ''}
+        </div>
+        <div class="calResult" style="font-size:12px;color:var(--ink-soft);margin-top:6px">
+          ${res ? calResultLine(res) : '<span class="hint">Not calibrated yet.</span>'}
+        </div>
+        <div style="margin-top:8px;display:flex;gap:8px">
+          <button class="ghost calAutoBtn" data-key="${key}" data-doc="${doc.file.name}" data-page="${p}">Auto-calibrate</button>
+          <button class="ghost calManualBtn" data-key="${key}" data-doc="${doc.file.name}" data-page="${p}">Adjust manually</button>
+        </div>
+      </div>`;
+    }
+  }
+  list.innerHTML = html;
+  list.querySelectorAll('.calAutoBtn').forEach(b=>b.addEventListener('click', ()=>runAutoCalibrate(b.dataset.doc, Number(b.dataset.page), b.dataset.key)));
+  list.querySelectorAll('.calManualBtn').forEach(b=>b.addEventListener('click', ()=>openManualCalibration(b.dataset.doc, Number(b.dataset.page), b.dataset.key)));
+}
+function calResultLine(res){
+  if(!res.pxPerInch) return '<span class="hint">No source found — manual calibration needed.</span>';
+  const parts=[`${res.pxPerInch.toFixed(2)} px/in`, `sheet scale ≈ ${scaleRatioText(res.sheetScaleRatio)}`, `source: ${res.source}`];
+  if(res.spread!=null) parts.push(`spread ${(res.spread*100).toFixed(1)}%`);
+  return parts.join(' · ');
+}
+async function findDocByName(name){ return calPdfDocs.find(d=>d.file.name===name); }
+async function runAutoCalibrate(docName, pageNum, key){
+  const doc = await findDocByName(docName); if(!doc) return;
+  const row = document.querySelector(`[data-calkey="${key}"] .calResult`);
+  try{
+    const res = await calibratePage(doc.pdf, pageNum, msg=>{ if(row) row.innerHTML=`<span class="hint">${msg}</span>`; });
+    state.pageScales[key] = res;
+    renderCalList();
+  }catch(e){
+    console.error('calibration failed', e);
+    if(row) row.innerHTML = `<span class="hint" style="color:var(--dim)">Calibration failed: ${e&&e.message||e}. Try manual calibration.</span>`;
+  }
+}
+$('btnLoadCalPages').addEventListener('click', async ()=>{
+  const pdfFiles = planFiles.filter(f=>f.type==='application/pdf');
+  if(!pdfFiles.length){ return; }
+  $('btnLoadCalPages').disabled=true; $('btnLoadCalPages').textContent='Loading…';
+  calPdfDocs = [];
+  for(const f of pdfFiles){
+    try{
+      const pdf = await pdfjsLib.getDocument({data: await f.arrayBuffer()}).promise;
+      calPdfDocs.push({file:f, pdf, numPages:pdf.numPages});
+    }catch(e){ console.error('failed to load PDF for calibration', f.name, e); }
+  }
+  $('btnLoadCalPages').disabled=false; $('btnLoadCalPages').textContent='Reload PDF pages';
+  renderCalList();
+});
+
+/* manual two-click calibration */
+let calManual = {docName:null, pageNum:null, key:null, canvas:null, ptA:null, ptB:null};
+async function openManualCalibration(docName, pageNum, key){
+  const doc = await findDocByName(docName); if(!doc) return;
+  const cv = await renderPdfPage(doc.pdf, pageNum, 1800);
+  calManual = {docName, pageNum, key, canvas:cv, ptA:null, ptB:null};
+  const dispCv = $('calCanvas');
+  dispCv.width=cv.width; dispCv.height=cv.height;
+  dispCv.getContext('2d').drawImage(cv,0,0);
+  $('calDistIn').value='';
+  $('calPointsHint').textContent='Point A: not set · Point B: not set';
+  $('calModal').classList.add('on');
+}
+function redrawCalCanvas(){
+  const dispCv=$('calCanvas'), c=dispCv.getContext('2d');
+  c.clearRect(0,0,dispCv.width,dispCv.height);
+  c.drawImage(calManual.canvas,0,0);
+  for(const [pt,col] of [[calManual.ptA,'#c4452c'],[calManual.ptB,'#2f6fd1']]){
+    if(!pt) continue;
+    c.save(); c.strokeStyle=col; c.fillStyle=col; c.lineWidth=2;
+    c.beginPath(); c.arc(pt[0],pt[1],6,0,7); c.stroke();
+    c.beginPath(); c.moveTo(pt[0]-10,pt[1]); c.lineTo(pt[0]+10,pt[1]); c.moveTo(pt[0],pt[1]-10); c.lineTo(pt[0],pt[1]+10); c.stroke();
+    c.restore();
+  }
+  if(calManual.ptA && calManual.ptB){
+    c.save(); c.strokeStyle='#5d6d80'; c.lineWidth=1.5; c.setLineDash([6,4]);
+    c.beginPath(); c.moveTo(calManual.ptA[0],calManual.ptA[1]); c.lineTo(calManual.ptB[0],calManual.ptB[1]); c.stroke();
+    c.restore();
+  }
+}
+$('calCanvas').addEventListener('click', e=>{
+  const rect=e.target.getBoundingClientRect();
+  const x=(e.clientX-rect.left)*(e.target.width/rect.width), y=(e.clientY-rect.top)*(e.target.height/rect.height);
+  if(!calManual.ptA || (calManual.ptA && calManual.ptB)){ calManual.ptA=[x,y]; calManual.ptB=null; }
+  else calManual.ptB=[x,y];
+  $('calPointsHint').textContent = `Point A: ${calManual.ptA?'set':'not set'} · Point B: ${calManual.ptB?'set':'not set'} — click again to redo either point, starting over`;
+  redrawCalCanvas();
+});
+$('calClose').addEventListener('click', ()=>$('calModal').classList.remove('on'));
+$('calModal').addEventListener('click', e=>{ if(e.target.id==='calModal') $('calModal').classList.remove('on'); });
+$('calSave').addEventListener('click', ()=>{
+  if(!calManual.ptA || !calManual.ptB){ alert('Click two points on the drawing first.'); return; }
+  const distIn = Number($('calDistIn').value);
+  if(!distIn || distIn<=0){ alert('Enter the real-world distance between the two points, in inches.'); return; }
+  const pxDist = Math.hypot(calManual.ptB[0]-calManual.ptA[0], calManual.ptB[1]-calManual.ptA[1]);
+  const pxPerInch = pxDist/distIn;
+  const meta = {renderMaxDim:Math.max(calManual.canvas.width,calManual.canvas.height)};
+  state.pageScales[calManual.key] = {
+    pxPerInch, source:'manual', confidence:'high',
+    sheetScaleRatio: null, sources:{manual:{pxPerInch}}, meta,
+    needsManual:false, pageNum:calManual.pageNum, calibratedAt:Date.now()
+  };
+  $('calModal').classList.remove('on');
+  renderCalList();
+});
 
 /* the model is told to reply with ONLY JSON, but strip stray commentary it
    sometimes adds anyway by grabbing the outermost {...} block */
