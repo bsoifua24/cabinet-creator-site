@@ -3012,9 +3012,10 @@ function renderCalList(){
         <div class="calResult" style="font-size:12px;color:var(--ink-soft);margin-top:6px">
           ${res ? calResultLine(res) : '<span class="hint">Not calibrated yet.</span>'}
         </div>
-        <div style="margin-top:8px;display:flex;gap:8px">
+        <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">
           <button class="ghost calAutoBtn" data-key="${key}" data-doc="${doc.file.name}" data-page="${p}">Auto-calibrate</button>
-          <button class="ghost calManualBtn" data-key="${key}" data-doc="${doc.file.name}" data-page="${p}">Adjust manually</button>
+          <button class="ghost calTypedBtn" data-key="${key}" data-doc="${doc.file.name}" data-page="${p}">I can read the scale — type it</button>
+          <button class="ghost calManualBtn" data-key="${key}" data-doc="${doc.file.name}" data-page="${p}">Click 2 points instead</button>
         </div>
       </div>`;
     }
@@ -3022,6 +3023,33 @@ function renderCalList(){
   list.innerHTML = html;
   list.querySelectorAll('.calAutoBtn').forEach(b=>b.addEventListener('click', ()=>runAutoCalibrate(b.dataset.doc, Number(b.dataset.page), b.dataset.key)));
   list.querySelectorAll('.calManualBtn').forEach(b=>b.addEventListener('click', ()=>openManualCalibration(b.dataset.doc, Number(b.dataset.page), b.dataset.key)));
+  list.querySelectorAll('.calTypedBtn').forEach(b=>b.addEventListener('click', ()=>applyTypedScale(b.dataset.doc, Number(b.dataset.page), b.dataset.key)));
+}
+/* the easiest of the 3+1 calibration paths: the user just reads the scale
+   note printed on the sheet themselves (as they'd naturally do — "1 inch
+   is 10 feet") and types it in, no clicking or measuring anything. Skips
+   OCR/vector detection entirely, so it works even when a sheet's scale
+   note isn't where the OCR crop regions expect it (e.g. a small per-
+   thumbnail note on an overview sheet, not the main title block). */
+async function applyTypedScale(docName, pageNum, key){
+  const doc = await findDocByName(docName); if(!doc) return;
+  const input = prompt('What does the scale note on this page say?\n\nExamples:  1/4" = 1\'-0"    3/16" = 1\'-0"    1" = 10\'-0"');
+  if(!input) return;
+  const ratio = parseArchScale(input.trim());
+  if(!ratio){ alert('Couldn\'t read that as a scale. Try a format like 1/4" = 1\'-0"  or  1" = 10\'-0".'); return; }
+  try{
+    const page = await doc.pdf.getPage(pageNum);
+    const vp = page.getViewport({scale:1});
+    const renderMaxDim = 2200;
+    const pxPerPt = renderMaxDim/Math.max(vp.width, vp.height);
+    const pxPerInch = pxPerPt*72*(ratio.num/ratio.den)/12;
+    state.pageScales[key] = {
+      pxPerInch, source:'typed', confidence:'high', sheetScaleRatio:ratio,
+      sources:{typed:{pxPerInch, ratio}}, meta:{pxPerPt, renderMaxDim},
+      needsManual:false, pageNum, calibratedAt:Date.now()
+    };
+    renderCalList();
+  }catch(e){ console.error('typed-scale calibration failed', e); alert('Something went wrong reading that page — try again.'); }
 }
 function calResultLine(res){
   if(!res.pxPerInch) return '<span class="hint">No source found — manual calibration needed.</span>';
