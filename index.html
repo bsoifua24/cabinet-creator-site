@@ -355,6 +355,7 @@ function ensureRoomDefaults(r){
   if(r.walls.ISLAND==null) r.walls.ISLAND=84;
   if(!r.cfg) r.cfg={A:{},B:{},C:{}};
   if(!r.cfg.ISLAND) r.cfg.ISLAND={};
+  if(!r.cfg.ISLAND2) r.cfg.ISLAND2={};
   if(!r.fin) r.fin={door:1,cab:4,top:0,sink:0};
   if(r.fin.fridgeBuiltIn==null) r.fin.fridgeBuiltIn=false;
   if(r.fin.handle==null) r.fin.handle=1;
@@ -368,7 +369,9 @@ function ensureRoomDefaults(r){
   if(r.fin.cabUpper==null) r.fin.cabUpper = r.fin.cab!=null ? r.fin.cab : 4;
   if(r.fin.handleBase==null) r.fin.handleBase = r.fin.handle!=null ? r.fin.handle : 1;
   if(r.fin.handleUpper==null) r.fin.handleUpper = r.fin.handle!=null ? r.fin.handle : 1;
-  if(!r.island) r.island={enabled:false,depth:24,height:36,bar:false,barChairs:4,pendant:false,pendantCount:3};
+  if(!r.island) r.island={enabled:false,depth:24,height:36,bar:false,barChairs:4,pendant:false,pendantCount:3,doubleSided:false,depth2:24};
+  if(r.island.doubleSided==null) r.island.doubleSided=false;
+  if(r.island.depth2==null) r.island.depth2=r.island.depth;
   if(r.bathUppers==null) r.bathUppers=false;
   if(r.type==='bath' && r.bathUppers && !r.upH) r.upH=30;
   if(r.type==='bath' && r.bathUppers && !r.upD) r.upD=7;
@@ -393,7 +396,10 @@ function newRoom(type, name, category){
     /* island length/fixtures live in walls.ISLAND / cfg.ISLAND above, reusing
        the same layoutWall engine as a perimeter wall; this just holds the
        island-specific extras that don't fit that shape */
-    island:{enabled:false, depth:24, height:36, bar:false, barChairs:4, pendant:false, pendantCount:3},
+    island:{enabled:false, depth:24, height:36, bar:false, barChairs:4, pendant:false, pendantCount:3,
+      doubleSided:false, depth2:24}, /* doubleSided: a second, independent cabinet face on the
+      far side of the island (its own depth/fixtures in cfg.ISLAND2) — a freestanding island is
+      the one place in this app two backs-to-back cabinet faces make physical sense */
     bathUppers:false,
     /* per-wall: floor-to-ceiling storage cabinets (no countertop/upper split)
        instead of the normal base+counter+upper run — a pantry-style wall */
@@ -489,13 +495,15 @@ function buildFixed(cfg, defs, orderable){
    greedyFill's 'B'/'VB' base codes) so a manual item looks and schedules
    identically to an algorithmic one, just positioned/sized by hand */
 function manualCatalog(r, wallId){
-  const cat = [{type:'base', label:r.type==='bath'?'Vanity base':'Base cabinet', codeBase:r.type==='bath'?'VB':'B', w:24}];
+  const cat = [{type:'base', label:r.type==='bath'?'Vanity base':r.type==='kitchen'?'Cupboard (doors)':'Base cabinet', codeBase:r.type==='bath'?'VB':'B', w:24}];
   if(r.type==='kitchen') cat.push(
+    {type:'db', label:'Drawer bank', codeBase:'DB', w:24},
     {type:'sink', label:'Sink', codeBase:'SB', w:SINK_W},
     {type:'dw', label:'Dishwasher', codeBase:'DW', w:DW_W, fixed:true},
     {type:'range', label:'Range', codeBase:'RANGE', w:RANGE_W, fixed:true},
     {type:'fridge', label:'Refrigerator', codeBase:'REF', w:FR_W, fixed:true},
     {type:'fridge', label:'Fridge/Freezer (double)', codeBase:'REF72', w:72, fixed:true},
+    {type:'minifridge', label:'Mini fridge (under-counter)', codeBase:'MFR', w:24, fixed:true},
     {type:'trash', label:'Trash pullout', codeBase:'TRSH', w:18},
     {type:'spice', label:'Spice pullout', codeBase:'SPC', w:9},
     {type:'ice', label:'Ice maker', codeBase:'ICE', w:15},
@@ -519,14 +527,16 @@ function manualCatalog(r, wallId){
   );
   /* a floor-to-ceiling unit doesn't make sense on a freestanding island —
      it isn't against a wall, so there's nothing for it to reach up to */
-  return wallId==='ISLAND' ? cat.filter(c=>c.type!=='tall') : cat;
+  return (wallId&&wallId.indexOf('ISLAND')===0) ? cat.filter(c=>c.type!=='tall') : cat;
 }
 function newManualItem(entry, defaultD){
   const code = entry.fixed ? entry.codeBase : entry.codeBase+Math.round(entry.w);
   return {key:genId(), type:entry.type, code, label:entry.label, w:entry.w, d:defaultD, tall:entry.tall};
 }
 function layoutWall(r, id){
-  const L = Number(r.walls[id])||0, cfg = r.cfg[id]||{}, cr = corners(r,id);
+  /* ISLAND2 (the far face of a double-sided island) always runs the same
+     physical length as ISLAND — no separate length field to keep in sync */
+  const L = Number(r.walls[id==='ISLAND2'?'ISLAND':id])||0, cfg = r.cfg[id]||{}, cr = corners(r,id);
   /* a tall/tower/linen unit is floor-to-ceiling by definition — its height
      always tracks the room's current ceiling/upper-cabinet line rather than
      a fixed nominal number, so it can't drift out of sync (leaving a gap
@@ -912,6 +922,16 @@ function drawPlan(){
       c.strokeRect(x+w*.28,y+h*.1,w*.44,h*.2);c.restore(); }
     if(it.type==='rod'){ line(c,x+4,y+h*.5,x+w-4,y+h*.5,2,'#5d6d80',[10,6]); }
   }
+  /* a run of adjacent cabinets shares one outer boundary and gets a short
+     tick at the front edge for each internal boundary, instead of a full
+     depth-wise line between every single door — real cabinetry doesn't
+     have a wall-to-wall divider between each unit in a run, only shop
+     drawings that treat every cabinet as its own isolated box do. Fixtures
+     (fridge/range/washer/dryer, a bath's toilet gap) keep their own full
+     outline since they really are separate boxes, not part of the run.
+     Reuses counterSegments() — the same contiguous-run grouping the
+     countertop slab already uses — so the two stay visually consistent. */
+  function cabRunSet(items){ const s=new Set(); for(const seg of counterSegments(items)) for(const it of seg.items) if(it.type!=='gap') s.add(it); return s; }
   function runH(lay,yTop,flip,id){
     planHit.walls[id]='H';
     const stw=!!(r.storageWall&&r.storageWall[id]);
@@ -920,13 +940,25 @@ function drawPlan(){
        per wall, not per cabinet) clear the deepest item so they never cut
        through a custom cabinet that's deeper than the room's standard bd */
     const wallD = Math.max(bd, ...lay.items.map(i=>i.d||bd));
+    const inRun = r.type==='closet' ? new Set() : cabRunSet(lay.items);
     rect(c,X(0),Y(yTop)-(flip?0:6),lay.L*s,6,2,'#1b2a3a','#1b2a3a');
     for(const it of lay.items){
       const cd=it.d||bd, x=X(it.x), w=it.w*s, y=flip?Y(yTop)-cd*s:Y(yTop), h=cd*s;
       const fill = ['fridge','range','washer','dryer'].includes(it.type)?'#f3e9e6': it.type==='gap'?'#fff': it.type==='filler'?'#e6ebef': cabF;
-      rect(c,x,y,w,h,2,'#1b2a3a', it.type==='gap'?null:fill);
+      if(inRun.has(it)){ c.save(); c.fillStyle=fill; c.fillRect(x,y,w,h); c.restore(); }
+      else rect(c,x,y,w,h,2,'#1b2a3a', it.type==='gap'?null:fill);
       if(it.type!=='filler'&&it.type!=='gap') fitTxt(c,it.label,x+w/2,y+h/2,w,h,15);
       decorate(it,x,y,w,h,true);
+    }
+    if(r.type!=='closet') for(const seg of counterSegments(lay.items)){
+      const segItems=seg.items.filter(i=>i.type!=='gap'); if(!segItems.length) continue;
+      const segD=Math.max(...segItems.map(i=>i.d||bd));
+      const sy=flip?Y(yTop)-segD*s:Y(yTop), sh=segD*s;
+      rect(c,X(seg.t0),sy,X(seg.t1)-X(seg.t0),sh,2,'#1b2a3a',null);
+      const frontY=flip?sy:sy+sh, tickLen=Math.min(5,segD*.3)*s, tickSign=flip?1:-1;
+      let tx=seg.t0;
+      for(const it of segItems){ tx+=it.w; if(tx>=seg.t1-.01) continue;
+        const px=X(tx); line(c,px,frontY,px,frontY+tickSign*tickLen,2,'#1b2a3a'); }
     }
     if(r.type!=='closet'){
       if(!stw){ const ce=flip?Y(yTop)-(wallD+1.5)*s:Y(yTop)+(wallD+1.5)*s; line(c,X(0),ce,X(lay.L),ce,1.5,'#8b7c55'); }
@@ -944,13 +976,25 @@ function drawPlan(){
     planHit.walls[id]='V';
     const stw=!!(r.storageWall&&r.storageWall[id]);
     const wallD = Math.max(bd, ...lay.items.map(i=>i.d||bd));
+    const inRun = r.type==='closet' ? new Set() : cabRunSet(lay.items);
     rect(c,X(xSide)-(rt?0:6),Y(0),6,lay.L*s,2,'#1b2a3a','#1b2a3a');
     for(const it of lay.items){
       const cd=it.d||bd, y=Y(it.x), h=it.w*s, x=rt?X(xSide)-cd*s:X(xSide), w=cd*s;
       const fill = ['fridge','range','washer','dryer'].includes(it.type)?'#f3e9e6': it.type==='gap'?'#fff': it.type==='filler'?'#e6ebef': cabF;
-      rect(c,x,y,w,h,2,'#1b2a3a', it.type==='gap'?null:fill);
+      if(inRun.has(it)){ c.save(); c.fillStyle=fill; c.fillRect(x,y,w,h); c.restore(); }
+      else rect(c,x,y,w,h,2,'#1b2a3a', it.type==='gap'?null:fill);
       if(it.type!=='filler'&&it.type!=='gap') fitTxt(c,it.label,x+w/2,y+h/2,w,h,15,'#1b2a3a',rt?-1:1);
       decorate(it,x,y,w,h,false);
+    }
+    if(r.type!=='closet') for(const seg of counterSegments(lay.items)){
+      const segItems=seg.items.filter(i=>i.type!=='gap'); if(!segItems.length) continue;
+      const segD=Math.max(...segItems.map(i=>i.d||bd));
+      const sx=rt?X(xSide)-segD*s:X(xSide), sw=segD*s;
+      rect(c,sx,Y(seg.t0),sw,Y(seg.t1)-Y(seg.t0),2,'#1b2a3a',null);
+      const frontX=rt?sx:sx+sw, tickLen=Math.min(5,segD*.3)*s, tickSign=rt?-1:1;
+      let ty=seg.t0;
+      for(const it of segItems){ ty+=it.w; if(ty>=seg.t1-.01) continue;
+        const py=Y(ty); line(c,frontX,py,frontX+tickSign*tickLen,py,2,'#1b2a3a'); }
     }
     if(r.type!=='closet'){
       if(!stw){ const ce=rt?X(xSide)-(wallD+1.5)*s:X(xSide)+(wallD+1.5)*s; line(c,ce,Y(0),ce,Y(lay.L),1.5,'#8b7c55'); }
@@ -974,12 +1018,22 @@ function drawPlan(){
   if(hasIsland){
     planHit.walls.ISLAND='H';
     const lay=layoutWall(r,'ISLAND'), rd=r.island.depth, yTop=H+30;
+    const inRunIsl = cabRunSet(lay.items);
     for(const it of lay.items){
       const cd=it.d||rd, x=X(it.x), w=it.w*s, y=Y(yTop), h=cd*s;
       const fill = ['fridge','range'].includes(it.type)?'#f3e9e6': it.type==='filler'?'#e6ebef': cabF;
-      rect(c,x,y,w,h,2,'#1b2a3a',fill);
+      if(inRunIsl.has(it)){ c.save(); c.fillStyle=fill; c.fillRect(x,y,w,h); c.restore(); }
+      else rect(c,x,y,w,h,2,'#1b2a3a',fill);
       if(it.type!=='filler') fitTxt(c,it.label,x+w/2,y+h/2,w,h,15);
       decorate(it,x,y,w,h,true);
+    }
+    for(const seg of counterSegments(lay.items)){
+      const segD=Math.max(...seg.items.map(i=>i.d||rd));
+      rect(c,X(seg.t0),Y(yTop),X(seg.t1)-X(seg.t0),segD*s,2,'#1b2a3a',null);
+      const tickLen=Math.min(5,segD*.3)*s;
+      let tx=seg.t0;
+      for(const it of seg.items){ tx+=it.w; if(tx>=seg.t1-.01) continue;
+        const px=X(tx); line(c,px,Y(yTop)+segD*s,px,Y(yTop)+segD*s-tickLen,2,'#1b2a3a'); }
     }
     dimV(c,Y(yTop),Y(yTop)+rd*s,X(0)-20,fmt(rd)+'"',12); /* island depth — the width dimension
       above only covers its length along the run, not how deep it is front-to-back */
@@ -1349,8 +1403,21 @@ function draw3D(){
          what would expose the inside of a non-standard-depth cabinet */
       const gapB = floatVanity ? r.toe+6 : r.toe;
       const bh=r.baseH-gapB, cd=it.d||bd;
-      put(it.w-.5,bh,cd,it.x+.25,gapB+bh/2,0,it.type==='dw'?mAppl:mCab);
-      if(it.type!=='dw'&&it.type!=='filler'&&it.type!=='corner'&&!it.open) doorFace(it.w-.5,bh-3,it.x+.25,gapB+bh/2,cd);
+      put(it.w-.5,bh,cd,it.x+.25,gapB+bh/2,0,it.type==='dw'||it.type==='minifridge'?mAppl:mCab);
+      if(it.type==='minifridge'){ /* under-counter appliance front — a seam + handle,
+        same idea as the full fridge's freestanding look, just sized to the base run
+        instead of forcing the whole cabinet run up to full fridge height */
+        put(.6,bh-8,.6,it.x+it.w/2-.3,gapB+bh/2,cd-.5,mTrim,false);
+        put(.7,10,1,it.x+it.w*.5-3.5,gapB+bh*.6,cd-.5,mTrim,false);
+        put(.7,10,1,it.x+it.w*.5+2.8,gapB+bh*.6,cd-.5,mTrim,false);
+      }
+      if(it.type!=='dw'&&it.type!=='minifridge'&&it.type!=='filler'&&it.type!=='corner'&&!it.open) doorFace(it.w-.5,bh-3,it.x+.25,gapB+bh/2,cd);
+      if(it.type==='db'){ /* drawer bank — two reveal grooves splitting the face into
+        3 drawer fronts, so choosing "Drawer bank" over "Cupboard" actually looks
+        different in 3D, not just in the elevation and schedule */
+        put(it.w-1.5,.4,.3,it.x+.75,gapB+bh/3,cd+.1,mTrim,false);
+        put(it.w-1.5,.4,.3,it.x+.75,gapB+2*bh/3,cd+.1,mTrim,false);
+      }
       if(r.toe>0 && !floatVanity) put(it.w-6,r.toe,cd-3,it.x+3,r.toe/2,0,mCabD,false);
     }
     if(r.type!=='closet' && !(r.storageWall&&r.storageWall[id])){
@@ -1550,8 +1617,21 @@ function draw3D(){
          instead of looking like it tunnels straight through the island */
       const shallow = ['spice','trash','ice'].includes(it.type);
       const cd = shallow ? Math.max(15, idp*.55) : idp;
+      if(it.type==='minifridge'){ /* under-counter appliance front, not a cabinet door —
+        this used to fall through to the full-height fridge branch above, forcing the
+        whole island up to 70" tall; now it stays within the island's own counter height */
+        put2(it.w-.5,ibh,cd,it.x+.25,itoe+ibh/2,0,mAppl);
+        put2(.6,ibh-8,.6,it.x+it.w/2-.3,itoe+ibh/2,-.5,mTrim,false);
+        put2(.7,10,1,it.x+it.w*.5-3.5,itoe+ibh*.6,-.5,mTrim,false);
+        put2(.7,10,1,it.x+it.w*.5+2.8,itoe+ibh*.6,-.5,mTrim,false);
+        continue;
+      }
       put2(it.w-.5,ibh,cd,it.x+.25,itoe+ibh/2,0,mCab);
       if(it.type!=='filler') doorFace2(it.w-.5,ibh-3,it.x+.25,itoe+ibh/2,0);
+      if(it.type==='db'){
+        put2(it.w-1.5,.4,.3,it.x+.75,itoe+ibh/3,-.1,mTrim,false);
+        put2(it.w-1.5,.4,.3,it.x+.75,itoe+2*ibh/3,-.1,mTrim,false);
+      }
       if(itoe>0) put2(it.w-6,itoe,cd-3,it.x+3,itoe/2,0,mCabD,false);
     }
     const overhang=r.island.bar?13:0;
