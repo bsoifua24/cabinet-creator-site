@@ -216,8 +216,9 @@
 
     <div class="card" id="calCard" style="display:none">
       <h2>Scale calibration <span style="font:600 11px var(--mono);color:var(--ink-soft)">— plan-takeoff engine, step 1</span></h2>
-      <p style="font-size:13px;color:var(--ink-soft);margin-bottom:12px">Every measurement the automated engine extracts later depends on this being right first. Nothing downstream runs until a page is calibrated.</p>
-      <button class="ghost" id="btnLoadCalPages">Load PDF pages for calibration</button>
+      <p style="font-size:13px;color:var(--ink-soft);margin-bottom:12px">This only needs to find and measure the pages with cabinets on them — cover sheets, elevations, exterior perspectives, and site plans are skipped automatically. Nothing downstream runs until a relevant page is calibrated.</p>
+      <button class="primary" id="btnFindCabPages">Find cabinet pages</button>
+      <button class="ghost" id="btnShowAllCalPages" style="display:none">Show all pages instead</button>
       <div id="calList" style="margin-top:12px"></div>
     </div>
 
@@ -2770,9 +2771,16 @@ function parseArchScale(text){
   if(m) return {num:1, den:Number(m[1])};
   return null;
 }
+/* fractional architectural scales (floor/detail plans) plus common
+   engineering scales (site/area/overview plans, e.g. 1"=10'-0") — a real
+   sheet is drawn at one of these essentially always, so a computed ratio
+   that doesn't land close to any of them is almost certainly a bad match,
+   not a genuinely unusual scale */
 const STANDARD_ARCH_SCALES = [
   {num:1,den:8},{num:3,den:16},{num:1,den:4},{num:3,den:8},{num:1,den:2},
-  {num:3,den:4},{num:1,den:1},{num:1.5,den:1},{num:3,den:1}
+  {num:3,den:4},{num:1,den:1},{num:1.5,den:1},{num:3,den:1},
+  {num:1,den:10},{num:1,den:16},{num:1,den:20},{num:1,den:30},
+  {num:1,den:40},{num:1,den:50},{num:1,den:60},{num:1,den:100}
 ];
 function nearestStandardScale(pxPerInch, pxPerPt){
   const implied = pxPerInch/(pxPerPt*6); /* drawing-inches per real foot */
@@ -2781,7 +2789,7 @@ function nearestStandardScale(pxPerInch, pxPerPt){
     const diff = Math.abs(sc.num/sc.den - implied)/implied;
     if(diff<bestDiff){ bestDiff=diff; best=sc; }
   }
-  return best;
+  return {...best, matchQuality:bestDiff};
 }
 function median(arr){
   if(!arr.length) return null;
@@ -2969,15 +2977,35 @@ async function calibratePage(pdf, pageNum, statusCb){
   const [lines, textContent] = await Promise.all([extractVectorLines(page), page.getTextContent()]);
 
   statusCb && statusCb('Measuring dimension strings (vector)…');
+  /* confirmed false-positive prone in real testing (matched SOME line to
+     SOME dimension-format text and computed a plausible-looking but wrong
+     ratio, even on a pure perspective-renderings sheet with no dimension
+     lines at all) — a wrong result reported as "medium confidence" is
+     worse than no result, so this is now gated on two checks before it's
+     trusted at all: the samples have to agree with EACH OTHER (not just
+     get averaged past their disagreement), and the result has to land
+     close to an actual standard architectural/engineering scale, not just
+     any number. Neither check is proof of correctness, but a coincidental
+     false match clearing both is much less likely than clearing neither. */
   const vecSamples = await extractVectorScaleSamples(lines, textContent);
-  if(vecSamples.length){
-    const ptsPerInch = median(vecSamples.map(s=>s.ptsPerInch));
-    results.vector = {pxPerInch: pxPerPt*ptsPerInch, sampleCount:vecSamples.length};
+  if(vecSamples.length>=2){
+    const ptsPerInchVals = vecSamples.map(s=>s.ptsPerInch);
+    const ptsPerInch = median(ptsPerInchVals);
+    const candidate = pxPerPt*ptsPerInch;
+    const selfSpread = (Math.max(...ptsPerInchVals)-Math.min(...ptsPerInchVals))/Math.min(...ptsPerInchVals);
+    const stdMatch = nearestStandardScale(candidate, pxPerPt);
+    if(selfSpread<0.15 && stdMatch.matchQuality<0.08){
+      results.vector = {pxPerInch:candidate, sampleCount:vecSamples.length, selfSpread};
+    }
   }
 
   statusCb && statusCb('Looking for a graphic scale bar…');
   const bar = await detectGraphicScaleBar(lines, textContent);
-  if(bar) results.scaleBar = {pxPerInch: pxPerPt*bar.ptsPerInch, tickCount:bar.tickCount};
+  if(bar){
+    const candidate = pxPerPt*bar.ptsPerInch;
+    const stdMatch = nearestStandardScale(candidate, pxPerPt);
+    if(stdMatch.matchQuality<0.08) results.scaleBar = {pxPerInch:candidate, tickCount:bar.tickCount};
+  }
 
   const resolved = reconcileScale(results, {pxPerPt, renderMaxDim, pageW:vp.width, pageH:vp.height});
   resolved.pageNum = pageNum;
@@ -2986,7 +3014,18 @@ async function calibratePage(pdf, pageNum, statusCb){
 }
 
 /* ---- UI ---- */
-let calPdfDocs = []; /* [{file, pdf, numPages}] loaded lazily, only once "Load PDF pages" is clicked */
+let calPdfDocs = []; /* [{file, pdf, numPages}] loaded lazily, only once "Find cabinet pages" is clicked */
+/* which pages actually have cabinets — reuses the SAME locate() AI call the
+   existing AI takeoff already uses (same endpoint, same prompt) rather than
+   building a second page classifier. null = scan hasn't run yet. Per the
+   locate prompt's own contract, h.page is the 1-indexed position within the
+   batch of images SENT, not necessarily the PDF's internal page number —
+   fine here since (like the existing takeoff flow) this assumes a single
+   PDF upload; a multi-PDF upload would need real per-file offsetting, which
+   the existing AI takeoff doesn't do either. */
+let calCabinetPages = null;
+let calCabinetPageInfo = {};
+let calShowAllPages = false;
 function scaleConfBadge(conf){
   const c = conf==='high'?'#2f8a72':conf==='medium'?'#b8862e':conf==='low'?'#c4452c':'#9aa4af';
   const label = {high:'HIGH',medium:'MEDIUM',low:'LOW — disagreement',none:'NOT CALIBRATED'}[conf]||conf.toUpperCase();
@@ -2999,14 +3038,22 @@ function scaleRatioText(ratio){
 function renderCalList(){
   const list = $('calList');
   if(!calPdfDocs.length){ list.innerHTML=''; return; }
+  const showToggle = $('btnShowAllCalPages');
+  showToggle.style.display = calCabinetPages ? '' : 'none';
+  showToggle.textContent = calShowAllPages ? 'Show only cabinet pages' : 'Show all pages instead';
   let html='';
+  let shown=0;
   for(const doc of calPdfDocs){
     for(let p=1; p<=doc.numPages; p++){
       const key=doc.file.name+'#'+p;
+      const isCab = !calCabinetPages || calCabinetPages.has(key);
+      if(!isCab && !calShowAllPages) continue;
+      shown++;
       const res = state.pageScales[key];
+      const info = calCabinetPageInfo[key];
       html += `<div class="wallcard" style="margin-bottom:8px" data-calkey="${key}">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
-          <div><b>${doc.file.name}</b> — page ${p}</div>
+          <div><b>${doc.file.name}</b> — page ${p}${info?` <span style="color:var(--dim)">· ${info.name||info.type}</span>`:''}${!isCab?' <span class="hint">(not flagged as cabinet-relevant)</span>':''}</div>
           ${res ? scaleConfBadge(res.confidence) : ''}
         </div>
         <div class="calResult" style="font-size:12px;color:var(--ink-soft);margin-top:6px">
@@ -3020,11 +3067,13 @@ function renderCalList(){
       </div>`;
     }
   }
+  if(!shown) html = `<p class="hint">${calCabinetPages ? 'No cabinet-relevant pages were flagged in this set.' : ''}</p>`;
   list.innerHTML = html;
   list.querySelectorAll('.calAutoBtn').forEach(b=>b.addEventListener('click', ()=>runAutoCalibrate(b.dataset.doc, Number(b.dataset.page), b.dataset.key)));
   list.querySelectorAll('.calManualBtn').forEach(b=>b.addEventListener('click', ()=>openManualCalibration(b.dataset.doc, Number(b.dataset.page), b.dataset.key)));
   list.querySelectorAll('.calTypedBtn').forEach(b=>b.addEventListener('click', ()=>applyTypedScale(b.dataset.doc, Number(b.dataset.page), b.dataset.key)));
 }
+$('btnShowAllCalPages').addEventListener('click', ()=>{ calShowAllPages=!calShowAllPages; renderCalList(); });
 /* the easiest of the 3+1 calibration paths: the user just reads the scale
    note printed on the sheet themselves (as they'd naturally do — "1 inch
    is 10 feet") and types it in, no clicking or measuring anything. Skips
@@ -3070,19 +3119,47 @@ async function runAutoCalibrate(docName, pageNum, key){
     if(row) row.innerHTML = `<span class="hint" style="color:var(--dim)">Calibration failed: ${e&&e.message||e}. Try manual calibration.</span>`;
   }
 }
-$('btnLoadCalPages').addEventListener('click', async ()=>{
+$('btnFindCabPages').addEventListener('click', async ()=>{
   const pdfFiles = planFiles.filter(f=>f.type==='application/pdf');
-  if(!pdfFiles.length){ return; }
-  $('btnLoadCalPages').disabled=true; $('btnLoadCalPages').textContent='Loading…';
-  calPdfDocs = [];
-  for(const f of pdfFiles){
-    try{
-      const pdf = await pdfjsLib.getDocument({data: await f.arrayBuffer()}).promise;
-      calPdfDocs.push({file:f, pdf, numPages:pdf.numPages});
-    }catch(e){ console.error('failed to load PDF for calibration', f.name, e); }
+  if(!pdfFiles.length) return;
+  const btn=$('btnFindCabPages'); btn.disabled=true;
+  const origText=btn.textContent;
+  try{
+    btn.textContent='Loading PDF pages…';
+    if(!calPdfDocs.length){
+      for(const f of pdfFiles){
+        const pdf = await pdfjsLib.getDocument({data: await f.arrayBuffer()}).promise;
+        calPdfDocs.push({file:f, pdf, numPages:pdf.numPages});
+      }
+    }
+    btn.textContent='Scanning for cabinet-relevant pages…';
+    const thumbs=[], order=[];
+    for(const doc of calPdfDocs){
+      for(let p=1; p<=doc.numPages; p++){
+        const cv = await renderPdfPage(doc.pdf, p, 900);
+        thumbs.push({media_type:'image/jpeg', data:canvasJpeg(cv,.6), kind:'image', caption:`Page ${p}`});
+        order.push({docName:doc.file.name, pageNum:p});
+      }
+    }
+    const locText = await callAI('locate', thumbs);
+    let parsed={}; try{ parsed=JSON.parse(extractJson(locText)); }catch(e){ console.error('locate parse failed', e, locText); }
+    const hits = Array.isArray(parsed.hits) ? parsed.hits : [];
+    calCabinetPages = new Set(); calCabinetPageInfo = {};
+    for(const h of hits){
+      const idx = Number(h.page)-1;
+      if(idx<0 || idx>=order.length) continue;
+      const {docName, pageNum} = order[idx];
+      const key = docName+'#'+pageNum;
+      calCabinetPages.add(key);
+      calCabinetPageInfo[key] = {name:h.name, type:h.type};
+    }
+    calShowAllPages=false;
+    renderCalList();
+  }catch(e){
+    console.error('find cabinet pages failed', e);
+    alert('Could not scan the plan set: '+(e&&e.message||e));
   }
-  $('btnLoadCalPages').disabled=false; $('btnLoadCalPages').textContent='Reload PDF pages';
-  renderCalList();
+  btn.disabled=false; btn.textContent=origText;
 });
 
 /* manual two-click calibration */
