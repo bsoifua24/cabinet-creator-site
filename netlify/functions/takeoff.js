@@ -70,6 +70,8 @@ exports.handler = async (event) => {
       body: JSON.stringify({
         model: 'claude-sonnet-4-6',
         max_tokens: 4096,
+        temperature: 0, /* a dimension reading should come back the same way every time
+          for the same page — deterministic reads matter more than variety here */
         messages: [{ role: 'user', content }]
       })
     });

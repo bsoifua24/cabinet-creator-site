@@ -67,6 +67,9 @@ exports.handler = async (event) => {
       body: JSON.stringify({
         model: 'claude-sonnet-4-6',
         max_tokens: 2000,
+        temperature: 0, /* this scans the same plan set every time a user re-runs it —
+          consistency across runs matters more than variety here, so this is pinned to
+          the model's most deterministic setting instead of the 1.0 default */
         messages: [{ role: 'user', content }]
       })
     });

@@ -214,18 +214,19 @@
       <div class="filelist" id="planList"></div>
     </div>
 
-    <div class="card" id="calCard" style="display:none">
-      <h2>Scale calibration <span style="font:600 11px var(--mono);color:var(--ink-soft)">— plan-takeoff engine, step 1</span></h2>
-      <p style="font-size:13px;color:var(--ink-soft);margin-bottom:12px">This only needs to find and measure the pages with cabinets on them — cover sheets, elevations, exterior perspectives, and site plans are skipped automatically. Nothing downstream runs until a relevant page is calibrated.</p>
+    <div class="card" id="calCard">
+      <h2>Find &amp; measure cabinet rooms <span style="font:600 11px var(--mono);color:var(--ink-soft)">— recommended</span></h2>
+      <p style="font-size:13px;color:var(--ink-soft);margin-bottom:12px">Finds the pages with cabinets on them (cover sheets, elevations, exterior perspectives, and site plans are skipped automatically), lets you correct that list by hand, then reads exact dimensions off just those pages and sends them to Review extracted rooms below.</p>
       <button class="primary" id="btnFindCabPages">Find cabinet pages</button>
       <button class="ghost" id="btnShowAllCalPages" style="display:none">Show all pages instead</button>
+      <button class="primary" id="btnGetDimensions" style="display:none;margin-left:8px">Get dimensions for these rooms →</button>
       <div id="calList" style="margin-top:12px"></div>
     </div>
 
     <div class="card">
-      <h2>AI plan takeoff</h2>
-      <p style="font-size:13px;color:var(--ink-soft);margin-bottom:12px">One click — the analysis runs on this site's own server. Nothing to install or configure.</p>
-      <button class="primary" id="btnAnalyze">Analyze plans → extract rooms & dimensions</button>
+      <h2>Quick analyze <span style="font:600 11px var(--mono);color:var(--ink-soft)">— skips page review</span></h2>
+      <p style="font-size:13px;color:var(--ink-soft);margin-bottom:12px">One click, no chance to correct the page list first — the AI finds and reads everything in one pass. Use "Find &amp; measure cabinet rooms" above instead if you want to check (or fix) which pages it's reading before it reads them.</p>
+      <button class="ghost" id="btnAnalyze">Analyze plans → extract rooms & dimensions</button>
       <div class="status" id="aiStatus"></div>
       <div class="warn"><b>Verify before pricing.</b> The takeoff reads dimension strings and scales off the drawing — treat every number as preliminary and confirm against the plan or on site, exactly as shop drawings require.</div>
       <details style="margin-top:10px">
@@ -2619,7 +2620,6 @@ $('drop').addEventListener('click',()=>$('planIn').click());
 $('planIn').addEventListener('change',e=>{addPlans(e.target.files);e.target.value='';});
 function addPlans(fl){ for(const f of fl) planFiles.push(f);
   $('planList').innerHTML=planFiles.map(f=>`<span>${f.name}</span>`).join('');
-  $('calCard').style.display = planFiles.some(f=>f.type==='application/pdf') ? '' : 'none';
 }
 function b64(file){ return new Promise((res,rej)=>{const r=new FileReader();
   r.onload=()=>res(r.result.split(',')[1]); r.onerror=rej; r.readAsDataURL(file);}); }
@@ -3083,16 +3083,18 @@ async function calibratePage(pdf, pageNum, statusCb){
 
 /* ---- UI ---- */
 let calPdfDocs = []; /* [{file, pdf, numPages}] loaded lazily, only once "Find cabinet pages" is clicked */
-/* which pages actually have cabinets — reuses the SAME locate() AI call the
-   existing AI takeoff already uses (same endpoint, same prompt) rather than
-   building a second page classifier. null = scan hasn't run yet. Per the
-   locate prompt's own contract, h.page is the 1-indexed position within the
-   batch of images SENT, not necessarily the PDF's internal page number —
-   fine here since (like the existing takeoff flow) this assumes a single
-   PDF upload; a multi-PDF upload would need real per-file offsetting, which
-   the existing AI takeoff doesn't do either. */
-let calCabinetPages = null;
-let calCabinetPageInfo = {};
+/* which pages actually have cabinets, and what's on them — reuses the SAME
+   locate() AI call the existing AI takeoff already uses (same endpoint, same
+   prompt) rather than building a second page classifier. null = scan hasn't
+   run yet. Each entry carries docName+pageNum (not just a bare page number)
+   so a multi-PDF upload resolves correctly — h.page from the AI is only the
+   1-indexed position within the flat batch of thumbnails sent, mapped back
+   to a real {docName,pageNum} via the `order` array in btnFindCabPages'
+   handler. This is also the user-corrected list (see calToggleRelevant) —
+   not just the raw AI output — since false positives (e.g. a boiler room
+   with no cabinets) need a manual override, and a page the AI missed needs
+   a manual add. */
+let calLocateHits = null;
 let calShowAllPages = false;
 function scaleConfBadge(conf){
   const c = conf==='high'?'#2f8a72':conf==='medium'?'#b8862e':conf==='low'?'#c4452c':'#9aa4af';
@@ -3105,23 +3107,31 @@ function scaleRatioText(ratio){
 }
 function renderCalList(){
   const list = $('calList');
-  if(!calPdfDocs.length){ list.innerHTML=''; return; }
+  const getBtn = $('btnGetDimensions');
+  if(!calPdfDocs.length){
+    list.innerHTML='';
+    getBtn.style.display='none';
+    return;
+  }
   const showToggle = $('btnShowAllCalPages');
-  showToggle.style.display = calCabinetPages ? '' : 'none';
+  showToggle.style.display = calLocateHits ? '' : 'none';
   showToggle.textContent = calShowAllPages ? 'Show only cabinet pages' : 'Show all pages instead';
+  const n = calLocateHits ? calLocateHits.length : 0;
+  getBtn.style.display = n ? '' : 'none';
+  getBtn.textContent = `Get dimensions for these ${n} room${n===1?'':'s'} →`;
   let html='';
   let shown=0;
   for(const doc of calPdfDocs){
     for(let p=1; p<=doc.numPages; p++){
       const key=doc.file.name+'#'+p;
-      const isCab = !calCabinetPages || calCabinetPages.has(key);
+      const hit = calLocateHits ? calLocateHits.find(h=>h.key===key) : null;
+      const isCab = !calLocateHits || !!hit;
       if(!isCab && !calShowAllPages) continue;
       shown++;
       const res = state.pageScales[key];
-      const info = calCabinetPageInfo[key];
       html += `<div class="wallcard" style="margin-bottom:8px" data-calkey="${key}">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
-          <div><b>${doc.file.name}</b> — page ${p}${info?` <span style="color:var(--dim)">· ${info.name||info.type}</span>`:''}${!isCab?' <span class="hint">(not flagged as cabinet-relevant)</span>':''}</div>
+          <div><b>${doc.file.name}</b> — page ${p}${hit&&(hit.name||hit.type)?` <span style="color:var(--dim)">· ${hit.name||hit.type}</span>`:''}${!isCab?' <span class="hint">(not flagged as cabinet-relevant)</span>':''}</div>
           ${res ? scaleConfBadge(res.confidence) : ''}
         </div>
         <div class="calResult" style="font-size:12px;color:var(--ink-soft);margin-top:6px">
@@ -3131,17 +3141,36 @@ function renderCalList(){
           <button class="ghost calAutoBtn" data-key="${key}" data-doc="${doc.file.name}" data-page="${p}">Auto-calibrate</button>
           <button class="ghost calTypedBtn" data-key="${key}" data-doc="${doc.file.name}" data-page="${p}">I can read the scale — type it</button>
           <button class="ghost calManualBtn" data-key="${key}" data-doc="${doc.file.name}" data-page="${p}">Click 2 points instead</button>
+          ${!calLocateHits ? '' : isCab
+            ? `<button class="ghost calRemoveBtn" data-key="${key}" data-doc="${doc.file.name}" data-page="${p}" style="color:var(--dim)">Not a cabinet room — remove</button>`
+            : `<button class="ghost calAddBtn" data-key="${key}" data-doc="${doc.file.name}" data-page="${p}">Add as cabinet room</button>`}
         </div>
       </div>`;
     }
   }
-  if(!shown) html = `<p class="hint">${calCabinetPages ? 'No cabinet-relevant pages were flagged in this set.' : ''}</p>`;
+  if(!shown) html = `<p class="hint">${calLocateHits ? 'No cabinet-relevant pages were flagged in this set.' : 'Click "Find cabinet pages" above to scan this set.'}</p>`;
   list.innerHTML = html;
   list.querySelectorAll('.calAutoBtn').forEach(b=>b.addEventListener('click', ()=>runAutoCalibrate(b.dataset.doc, Number(b.dataset.page), b.dataset.key)));
   list.querySelectorAll('.calManualBtn').forEach(b=>b.addEventListener('click', ()=>openManualCalibration(b.dataset.doc, Number(b.dataset.page), b.dataset.key)));
+  list.querySelectorAll('.calRemoveBtn').forEach(b=>b.addEventListener('click', ()=>calToggleRelevant(b.dataset.doc, Number(b.dataset.page), b.dataset.key, false)));
+  list.querySelectorAll('.calAddBtn').forEach(b=>b.addEventListener('click', ()=>calToggleRelevant(b.dataset.doc, Number(b.dataset.page), b.dataset.key, true)));
   list.querySelectorAll('.calTypedBtn').forEach(b=>b.addEventListener('click', ()=>applyTypedScale(b.dataset.doc, Number(b.dataset.page), b.dataset.key)));
 }
 $('btnShowAllCalPages').addEventListener('click', ()=>{ calShowAllPages=!calShowAllPages; renderCalList(); });
+/* lets the user correct the AI's page list by hand — remove a false positive
+   (a boiler room with no cabinets flagged as one) or add a page the AI
+   missed — before spending a takeoff call reading dimensions off it. A
+   manually-added page has no AI-provided crop region, so it gets the whole
+   page as its bbox rather than being skipped. */
+function calToggleRelevant(docName, pageNum, key, makeRelevant){
+  if(!calLocateHits) calLocateHits=[];
+  if(makeRelevant){
+    if(!calLocateHits.some(h=>h.key===key)) calLocateHits.push({docName, pageNum, key, name:null, type:null, bbox:[0,0,1,1]});
+  } else {
+    calLocateHits = calLocateHits.filter(h=>h.key!==key);
+  }
+  renderCalList();
+}
 /* the easiest of the 3+1 calibration paths: the user just reads the scale
    note printed on the sheet themselves (as they'd naturally do — "1 inch
    is 10 feet") and types it in, no clicking or measuring anything. Skips
@@ -3197,7 +3226,7 @@ async function runAutoCalibrate(docName, pageNum, key){
 }
 $('btnFindCabPages').addEventListener('click', async ()=>{
   const pdfFiles = planFiles.filter(f=>f.type==='application/pdf');
-  if(!pdfFiles.length) return;
+  if(!pdfFiles.length){ $('calList').innerHTML='<p class="hint">Add at least one PDF plan above first, then click this again.</p>'; return; }
   const btn=$('btnFindCabPages'); btn.disabled=true;
   const origText=btn.textContent;
   try{
@@ -3220,14 +3249,15 @@ $('btnFindCabPages').addEventListener('click', async ()=>{
     const locText = await callAI('locate', thumbs);
     let parsed={}; try{ parsed=JSON.parse(extractJson(locText)); }catch(e){ console.error('locate parse failed', e, locText); }
     const hits = Array.isArray(parsed.hits) ? parsed.hits : [];
-    calCabinetPages = new Set(); calCabinetPageInfo = {};
+    calLocateHits = [];
     for(const h of hits){
       const idx = Number(h.page)-1;
       if(idx<0 || idx>=order.length) continue;
       const {docName, pageNum} = order[idx];
       const key = docName+'#'+pageNum;
-      calCabinetPages.add(key);
-      calCabinetPageInfo[key] = {name:h.name, type:h.type};
+      if(calLocateHits.some(x=>x.key===key)) continue; /* AI shouldn't repeat a page, but don't duplicate the row if it does */
+      calLocateHits.push({docName, pageNum, key, name:h.name, type:h.type,
+        bbox: Array.isArray(h.bbox)&&h.bbox.length===4 ? h.bbox : [0,0,1,1]});
     }
     calShowAllPages=false;
     renderCalList();
@@ -3388,6 +3418,91 @@ function applyRoomsFromJson(d, hits, sourcePages){
   state.sourcePages=sourcePages;
 }
 
+/* shared tail for BOTH takeoff entry points below — "Get dimensions for these
+   rooms" (calibration card, hits already confirmed/corrected by hand) and
+   "Quick analyze" (runs its own internal locate pass first, see below) — so
+   the two paths can't drift out of sync on how a takeoff result gets read,
+   batched, and applied to the Designer. One call per handful of images, not
+   one giant call — a full "CD set" can easily produce more detected rooms
+   than fit safely in a single request (image/output-token limits, function
+   timeouts), and one bad batch shouldn't be able to sink rooms that were
+   read just fine in another. */
+async function runTakeoffBatches(extractFiles, hits, sourcePages){
+  if(!extractFiles.length){ setStatus('No readable pages to analyze. Try Skip and enter rooms by hand, or upload a clearer page.', true); return; }
+  const EXTRACT_BATCH=6;
+  const batches=[];
+  for(let i=0;i<extractFiles.length;i+=EXTRACT_BATCH) batches.push(extractFiles.slice(i,i+EXTRACT_BATCH));
+  const allRooms=[]; let failedBatches=0, lastRawText='';
+  for(let bi=0; bi<batches.length; bi++){
+    setStatus(batches.length>1
+      ? `Reading dimensions — batch ${bi+1}/${batches.length} (${batches[bi].length} area${batches[bi].length>1?'s':''})…`
+      : `Reading dimensions on ${batches[bi].length} area${batches[bi].length>1?'s':''}…`);
+    let text;
+    try{ text=await callAI('extract', batches[bi]); }
+    catch(err){ console.error('extract batch failed', bi, err); failedBatches++; continue; }
+    lastRawText=text;
+    let d; try{ d=JSON.parse(extractJson(text)); }
+    catch(e){ console.error('extract batch JSON parse failed', bi, e, text); failedBatches++; continue; }
+    if(d && Array.isArray(d.rooms)) allRooms.push(...d.rooms);
+  }
+
+  if(allRooms.length){
+    const d=handleTakeoffText(JSON.stringify({rooms:allRooms}));
+    applyRoomsFromJson(d, hits, sourcePages);
+    gotoPage('pDesign'); rebuildAll();
+    const warn=failedBatches?` (${failedBatches} of ${batches.length} batches failed — re-run to retry those)`:'';
+    setStatus(`Loaded ${allRooms.length} space${allRooms.length>1?'s':''}${warn} — review them on the Eagle Eye tab below.`, !!failedBatches);
+  } else {
+    handleTakeoffText(lastRawText||'');
+    setStatus(failedBatches===batches.length ? 'Every batch failed — check the browser console for details, or re-run.' : 'The AI response had no rooms in it. Review the box below, or re-run.', true);
+  }
+}
+
+/* the calibration card's own takeoff path: unlike Quick analyze below, this
+   never runs its own locate() pass — it trusts calLocateHits, the list the
+   user already reviewed (and hand-corrected) above, and goes straight to
+   reading dimensions off exactly those pages. Doc-aware (looks the PDF up by
+   docName per hit) so it stays correct even when more than one PDF was
+   uploaded, unlike the legacy single-locate-call path in btnAnalyze. */
+async function getDimensionsForHits(hits){
+  if(!hits || !hits.length) return;
+  const findPdf = (docName)=> (calPdfDocs.find(d=>d.file.name===docName)||{}).pdf;
+
+  /* sourcePages/r.source.page are keyed by bare page number, matching how
+     Eagle Eye has always identified a page — fine for the common case of one
+     uploaded PDF; if two different files both have e.g. a "page 3" hit, the
+     second one wins here for review-image display only (its own dimensions
+     are still read from the correct doc, since the crop loop below looks the
+     PDF up by docName per hit, not by this shared page-number namespace). */
+  setStatus(`Rendering ${hits.length} confirmed page${hits.length>1?'s':''}…`);
+  const sourcePages=[]; const seenPages=new Set();
+  for(const h of hits){
+    if(seenPages.has(h.pageNum)) continue; seenPages.add(h.pageNum);
+    const pdf=findPdf(h.docName); if(!pdf) continue;
+    const cv=await renderPdfPage(pdf, h.pageNum, 1600);
+    sourcePages.push({page:h.pageNum, img:cv.toDataURL('image/jpeg',.82)});
+  }
+
+  setStatus(`Reading dimensions on ${hits.length} confirmed room${hits.length>1?'s':''}…`);
+  const extractFiles=[]; const legacyHits=[];
+  for(const h of hits){
+    const pdf=findPdf(h.docName); if(!pdf) continue;
+    const bbox = Array.isArray(h.bbox) && h.bbox.length===4 ? h.bbox : [0,0,1,1];
+    const cv=await renderPdfPage(pdf, h.pageNum, 2400);
+    const cropped=cropCanvas(cv, bbox);
+    extractFiles.push({media_type:'image/jpeg', data:canvasJpeg(cropped,.9), kind:'image',
+      caption:`Page ${h.pageNum} — likely "${h.name||h.type||'room'}" (${h.type||'?'}).`});
+    legacyHits.push({page:h.pageNum, name:h.name, type:h.type, bbox});
+  }
+  await runTakeoffBatches(extractFiles, legacyHits, sourcePages);
+}
+$('btnGetDimensions').addEventListener('click', async ()=>{
+  const btn=$('btnGetDimensions'); btn.disabled=true;
+  try{ await getDimensionsForHits(calLocateHits); }
+  catch(err){ console.error('get dimensions failed', err); setStatus('Takeoff failed: '+(err&&err.message||err), true); }
+  btn.disabled=false;
+});
+
 $('btnAnalyze').addEventListener('click', async ()=>{
   if(!planFiles.length){ setStatus('Add at least one plan page.', true); return; }
   try{
@@ -3459,39 +3574,7 @@ $('btnAnalyze').addEventListener('click', async ()=>{
     for(const pg of pages.filter(p=>p.kind==='image')) extractFiles.push(await compressImage(pg.file));
     for(const pg of pages.filter(p=>p.kind==='pdf-raw')) extractFiles.push({media_type:'application/pdf', data:await b64(pg.file), kind:'document'});
 
-    if(!extractFiles.length){ setStatus('No readable pages to analyze. Try Skip and enter rooms by hand, or upload a clearer page.', true); return; }
-
-    /* one call per handful of images, not one giant call — a full "CD set" can
-       easily produce more detected rooms than fit safely in a single request
-       (image/output-token limits, function timeouts), and one bad batch
-       shouldn't be able to sink rooms that were read just fine in another */
-    const EXTRACT_BATCH=6;
-    const batches=[];
-    for(let i=0;i<extractFiles.length;i+=EXTRACT_BATCH) batches.push(extractFiles.slice(i,i+EXTRACT_BATCH));
-    const allRooms=[]; let failedBatches=0, lastRawText='';
-    for(let bi=0; bi<batches.length; bi++){
-      setStatus(batches.length>1
-        ? `Reading dimensions — batch ${bi+1}/${batches.length} (${batches[bi].length} area${batches[bi].length>1?'s':''})…`
-        : `Reading dimensions on ${batches[bi].length} area${batches[bi].length>1?'s':''}…`);
-      let text;
-      try{ text=await callAI('extract', batches[bi]); }
-      catch(err){ console.error('extract batch failed', bi, err); failedBatches++; continue; }
-      lastRawText=text;
-      let d; try{ d=JSON.parse(extractJson(text)); }
-      catch(e){ console.error('extract batch JSON parse failed', bi, e, text); failedBatches++; continue; }
-      if(d && Array.isArray(d.rooms)) allRooms.push(...d.rooms);
-    }
-
-    if(allRooms.length){
-      const d=handleTakeoffText(JSON.stringify({rooms:allRooms}));
-      applyRoomsFromJson(d, hits, sourcePages);
-      gotoPage('pDesign'); rebuildAll();
-      const warn=failedBatches?` (${failedBatches} of ${batches.length} batches failed — re-run to retry those)`:'';
-      setStatus(`Loaded ${allRooms.length} space${allRooms.length>1?'s':''}${warn} — review them on the Eagle Eye tab below.`, !!failedBatches);
-    } else {
-      handleTakeoffText(lastRawText||'');
-      setStatus(failedBatches===batches.length ? 'Every batch failed — check the browser console for details, or re-run.' : 'The AI response had no rooms in it. Review the box below, or re-run.', true);
-    }
+    await runTakeoffBatches(extractFiles, hits, sourcePages);
   }catch(err){
     console.error(err);
     setStatus('Takeoff failed: '+(err&&err.message||err), true);
