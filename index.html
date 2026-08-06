@@ -2919,7 +2919,48 @@ async function detectGraphicScaleBar(lines, textContent){
   return null;
 }
 
-/* ---- title-block OCR (Tesseract.js) ---- */
+/* ---- text-layer scale search (no OCR needed for a born-digital PDF) ----
+   A vector PDF's title-block text — "SCALE: 3/16" = 1'-0"" — is almost
+   always real, embedded, selectable text, not pixels, so OCR shouldn't be
+   needed (or trusted over this) when it's available. getTextContent()
+   returns each run of text as its own item, often splitting one visual
+   line into several ("SCALE:", "3/16\"", "=", "1'-0\"" as separate items)
+   — this reconstructs visual lines by clustering items on nearly the same
+   baseline before searching, rather than checking each fragment alone. */
+function reconstructTextLines(textContent){
+  const byY = new Map();
+  for(const item of textContent.items){
+    if(!item.str || !item.str.trim()) continue;
+    const bucket = Math.round(item.transform[5]/2)*2;
+    if(!byY.has(bucket)) byY.set(bucket, []);
+    byY.get(bucket).push(item);
+  }
+  const lines = [];
+  for(const items of byY.values()){
+    items.sort((a,b)=>a.transform[4]-b.transform[4]);
+    lines.push({text: items.map(i=>i.str).join(' '), y: items[0].transform[5]});
+  }
+  return lines.sort((a,b)=>b.y-a.y);
+}
+function findScaleInTextLayer(textContent){
+  const lines = reconstructTextLines(textContent);
+  for(const line of lines){
+    const ratio = parseArchScale(line.text);
+    if(ratio) return {ratio, lineText:line.text};
+  }
+  /* "SCALE:" and its ratio can land on visually-adjacent but distinct
+     baselines depending on how the sheet was drafted — try consecutive
+     line pairs too before giving up */
+  for(let i=0;i<lines.length-1;i++){
+    const ratio = parseArchScale(lines[i].text+' '+lines[i+1].text);
+    if(ratio) return {ratio, lineText:lines[i].text+' | '+lines[i+1].text};
+  }
+  return null;
+}
+
+/* ---- title-block OCR (Tesseract.js) ----
+   Fallback only, for scanned/rasterized sheets where there's no text layer
+   to search — see findScaleInTextLayer above, tried first. */
 let tesseractWorkerPromise = null;
 function getTesseractWorker(){
   if(!tesseractWorkerPromise) tesseractWorkerPromise = Tesseract.createWorker('eng');
@@ -2944,37 +2985,60 @@ async function ocrTitleBlockScale(fullCanvas){
 /* ---- orchestration + reconciliation ---- */
 function reconcileScale(results, meta){
   const vals = Object.entries(results).map(([k,v])=>({source:k, pxPerInch:v.pxPerInch}));
+  const bestRatio = results.textLayer?.ratio || results.ocr?.ratio;
   if(!vals.length) return {pxPerInch:null, source:'none', confidence:'none', sheetScaleRatio:null, sources:results, meta, needsManual:true};
+  /* text-layer is the actual embedded scale note, read exactly, not a
+     guess from geometry or an image — trust it alone the same as if two
+     independent sources had already agreed */
+  if(results.textLayer){
+    return {pxPerInch:results.textLayer.pxPerInch, source:'textLayer', confidence:'high',
+      sheetScaleRatio:results.textLayer.ratio, sources:results, meta, needsManual:false};
+  }
   if(vals.length===1){
     const nearest = nearestStandardScale(vals[0].pxPerInch, meta.pxPerPt);
     return {pxPerInch:vals[0].pxPerInch, source:vals[0].source, confidence:'medium',
-      sheetScaleRatio: results.ocr?.ratio || nearest, sources:results, meta, needsManual:false};
+      sheetScaleRatio: bestRatio || nearest, sources:results, meta, needsManual:false};
   }
   const pxVals = vals.map(v=>v.pxPerInch), mx=Math.max(...pxVals), mn=Math.min(...pxVals);
   const spread = (mx-mn)/mn, med = median(pxVals);
   const nearest = nearestStandardScale(med, meta.pxPerPt);
   if(spread<=0.02){
     return {pxPerInch:med, source:'reconciled('+vals.map(v=>v.source).join('+')+')', confidence:'high',
-      sheetScaleRatio: results.ocr?.ratio || nearest, sources:results, meta, needsManual:false, spread};
+      sheetScaleRatio: bestRatio || nearest, sources:results, meta, needsManual:false, spread};
   }
   const preferred = results.ocr ? results.ocr.pxPerInch : med;
   return {pxPerInch:preferred, source:'disagreement', confidence:'low',
-    sheetScaleRatio: results.ocr?.ratio || nearest, sources:results, meta, needsManual:true, spread};
+    sheetScaleRatio: bestRatio || nearest, sources:results, meta, needsManual:true, spread};
 }
 async function calibratePage(pdf, pageNum, statusCb){
   const page = await pdf.getPage(pageNum);
   const vp = page.getViewport({scale:1}); /* scale:1 viewport IS in PDF points */
   const renderMaxDim = 2200;
   const pxPerPt = renderMaxDim/Math.max(vp.width, vp.height);
+  const debug = {};
 
-  statusCb && statusCb('Reading title block (OCR)…');
-  const fullCanvas = await renderPdfPage(pdf, pageNum, renderMaxDim);
-  const results = {};
-  const ocr = await ocrTitleBlockScale(fullCanvas);
-  if(ocr) results.ocr = {pxPerInch: pxPerPt*72*(ocr.ratio.num/ocr.ratio.den)/12, ratio:ocr.ratio, ocrText:ocr.ocrText};
-
-  statusCb && statusCb('Extracting vector geometry…');
+  statusCb && statusCb('Reading embedded text layer…');
   const [lines, textContent] = await Promise.all([extractVectorLines(page), page.getTextContent()]);
+  debug.textItemCount = textContent.items.length;
+  debug.lineCount = lines.length;
+  const results = {};
+  const textLayerHit = findScaleInTextLayer(textContent);
+  debug.textLayerMatch = textLayerHit ? textLayerHit.lineText : null;
+  if(textLayerHit) results.textLayer = {pxPerInch: pxPerPt*72*(textLayerHit.ratio.num/textLayerHit.ratio.den)/12, ratio:textLayerHit.ratio, matchedText:textLayerHit.lineText};
+
+  /* OCR is a fallback for scanned/rasterized sheets with no real text layer
+     to search — skipped when the text layer already answered it, since
+     that's both faster and more trustworthy than an image-recognition guess */
+  if(!results.textLayer){
+    statusCb && statusCb('No embedded text match — trying OCR on the title block…');
+    const fullCanvas = await renderPdfPage(pdf, pageNum, renderMaxDim);
+    const ocr = await ocrTitleBlockScale(fullCanvas);
+    debug.ocrRan = true;
+    debug.ocrFoundRatio = !!ocr;
+    if(ocr) results.ocr = {pxPerInch: pxPerPt*72*(ocr.ratio.num/ocr.ratio.den)/12, ratio:ocr.ratio, ocrText:ocr.ocrText};
+  } else {
+    debug.ocrRan = false;
+  }
 
   statusCb && statusCb('Measuring dimension strings (vector)…');
   /* confirmed false-positive prone in real testing (matched SOME line to
@@ -2988,12 +3052,14 @@ async function calibratePage(pdf, pageNum, statusCb){
      any number. Neither check is proof of correctness, but a coincidental
      false match clearing both is much less likely than clearing neither. */
   const vecSamples = await extractVectorScaleSamples(lines, textContent);
+  debug.vecSampleCount = vecSamples.length;
   if(vecSamples.length>=2){
     const ptsPerInchVals = vecSamples.map(s=>s.ptsPerInch);
     const ptsPerInch = median(ptsPerInchVals);
     const candidate = pxPerPt*ptsPerInch;
     const selfSpread = (Math.max(...ptsPerInchVals)-Math.min(...ptsPerInchVals))/Math.min(...ptsPerInchVals);
     const stdMatch = nearestStandardScale(candidate, pxPerPt);
+    debug.vecSelfSpread = selfSpread; debug.vecStdMatchQuality = stdMatch.matchQuality;
     if(selfSpread<0.15 && stdMatch.matchQuality<0.08){
       results.vector = {pxPerInch:candidate, sampleCount:vecSamples.length, selfSpread};
     }
@@ -3001,6 +3067,7 @@ async function calibratePage(pdf, pageNum, statusCb){
 
   statusCb && statusCb('Looking for a graphic scale bar…');
   const bar = await detectGraphicScaleBar(lines, textContent);
+  debug.scaleBarFound = !!bar;
   if(bar){
     const candidate = pxPerPt*bar.ptsPerInch;
     const stdMatch = nearestStandardScale(candidate, pxPerPt);
@@ -3010,6 +3077,7 @@ async function calibratePage(pdf, pageNum, statusCb){
   const resolved = reconcileScale(results, {pxPerPt, renderMaxDim, pageW:vp.width, pageH:vp.height});
   resolved.pageNum = pageNum;
   resolved.calibratedAt = Date.now();
+  resolved.debug = debug;
   return resolved;
 }
 
@@ -3101,9 +3169,17 @@ async function applyTypedScale(docName, pageNum, key){
   }catch(e){ console.error('typed-scale calibration failed', e); alert('Something went wrong reading that page — try again.'); }
 }
 function calResultLine(res){
-  if(!res.pxPerInch) return '<span class="hint">No source found — manual calibration needed.</span>';
+  if(!res.pxPerInch){
+    const d=res.debug||{};
+    const diag = `text items: ${d.textItemCount??'?'} · vector lines: ${d.lineCount??'?'} · dimension-line pairs: ${d.vecSampleCount??'?'}`
+      + (d.vecSelfSpread!=null?` (self-spread ${(d.vecSelfSpread*100).toFixed(0)}%, scale-match ${(d.vecStdMatchQuality*100).toFixed(0)}% off)`:'')
+      + ` · OCR ran: ${d.ocrRan?'yes':'no'}${d.ocrRan?(d.ocrFoundRatio?', found a ratio':', no ratio found'):''}`
+      + ` · scale bar: ${d.scaleBarFound?'candidate found, rejected':'none found'}`;
+    return `<span class="hint">No source found — manual calibration needed.</span><br><span class="hint" style="font-size:10px">${diag}</span>`;
+  }
   const parts=[`${res.pxPerInch.toFixed(2)} px/in`, `sheet scale ≈ ${scaleRatioText(res.sheetScaleRatio)}`, `source: ${res.source}`];
   if(res.spread!=null) parts.push(`spread ${(res.spread*100).toFixed(1)}%`);
+  if(res.source==='textLayer' && res.sources?.textLayer?.matchedText) parts.push(`matched: "${res.sources.textLayer.matchedText}"`);
   return parts.join(' · ');
 }
 async function findDocByName(name){ return calPdfDocs.find(d=>d.file.name===name); }
