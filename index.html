@@ -356,6 +356,8 @@ function ensureRoomDefaults(r){
   if(!r.cfg) r.cfg={A:{},B:{},C:{}};
   if(!r.cfg.ISLAND) r.cfg.ISLAND={};
   if(!r.cfg.ISLAND2) r.cfg.ISLAND2={};
+  if(!r.cfg.ISLAND3) r.cfg.ISLAND3={};
+  if(!r.cfg.ISLAND4) r.cfg.ISLAND4={};
   if(!r.fin) r.fin={door:1,cab:4,top:0,sink:0};
   if(r.fin.fridgeBuiltIn==null) r.fin.fridgeBuiltIn=false;
   if(r.fin.handle==null) r.fin.handle=1;
@@ -369,9 +371,13 @@ function ensureRoomDefaults(r){
   if(r.fin.cabUpper==null) r.fin.cabUpper = r.fin.cab!=null ? r.fin.cab : 4;
   if(r.fin.handleBase==null) r.fin.handleBase = r.fin.handle!=null ? r.fin.handle : 1;
   if(r.fin.handleUpper==null) r.fin.handleUpper = r.fin.handle!=null ? r.fin.handle : 1;
-  if(!r.island) r.island={enabled:false,depth:24,height:36,bar:false,barChairs:4,pendant:false,pendantCount:3,doubleSided:false,depth2:24};
-  if(r.island.doubleSided==null) r.island.doubleSided=false;
+  if(!r.island) r.island={enabled:false,depth:24,height:36,bar:false,barChairs:4,pendant:false,pendantCount:3};
+  /* sides is left undefined for any room saved before this existed — that's the
+     classic single-face island, unchanged. Only an explicit 2 or 4 (set only
+     through the new "Cabinet sides" picker) turns on the extra faces/corners,
+     so no existing project's island can change shape just from loading it. */
   if(r.island.depth2==null) r.island.depth2=r.island.depth;
+  if(r.island.endDepth==null) r.island.endDepth=18;
   if(r.bathUppers==null) r.bathUppers=false;
   if(r.type==='bath' && r.bathUppers && !r.upH) r.upH=30;
   if(r.type==='bath' && r.bathUppers && !r.upD) r.upD=7;
@@ -397,9 +403,12 @@ function newRoom(type, name, category){
        the same layoutWall engine as a perimeter wall; this just holds the
        island-specific extras that don't fit that shape */
     island:{enabled:false, depth:24, height:36, bar:false, barChairs:4, pendant:false, pendantCount:3,
-      doubleSided:false, depth2:24}, /* doubleSided: a second, independent cabinet face on the
-      far side of the island (its own depth/fixtures in cfg.ISLAND2) — a freestanding island is
-      the one place in this app two backs-to-back cabinet faces make physical sense */
+      depth2:24, endDepth:18}, /* sides (undefined/2/4) picks how many faces of the
+      island carry cabinets — a freestanding island is the one place in this app
+      more than one cabinet face makes physical sense. depth2 is the back face's
+      own depth (ISLAND2), endDepth is both end caps' depth (ISLAND3/ISLAND4) when
+      sides===4 — kept independent of the front face's depth since a real island
+      doesn't have to be symmetric front-to-back or end-to-end. */
     bathUppers:false,
     /* per-wall: floor-to-ceiling storage cabinets (no countertop/upper split)
        instead of the normal base+counter+upper run — a pantry-style wall */
@@ -445,7 +454,41 @@ function counterSegments(items){
    against both the 2D plan's runH/runV and the 3D placeRun's pos() math) — that's
    the room's actual shared corner. So the wall carrying the lazy-susan treatment
    ("big") must have its corner flagged at start, matching the wall it meets. */
+const ISLAND_FACE_IDS = ['ISLAND','ISLAND2','ISLAND3','ISLAND4'];
+/* total front-to-back depth of a 2- or 4-sided island: front + back, plus
+   both end caps' own depth when the island wraps all the way around.
+   Independent depths per face (not a single number split in half) since a
+   real island isn't always symmetric front-to-back or end-to-end. */
+function islandTotalDepth(r){
+  const sides = r.island.sides;
+  if(!sides || sides<2) return r.island.depth;
+  const div=1.5;
+  let d = r.island.depth + div + r.island.depth2;
+  return d;
+}
+/* which of an island's 4 possible faces a given depth belongs to — used
+   both as the default depth for a newly-added manual item and as the
+   fallback when a depth field is cleared */
+function islandFaceDepth(r, wid){
+  if(wid==='ISLAND2') return r.island.depth2;
+  if(wid==='ISLAND3'||wid==='ISLAND4') return r.island.endDepth;
+  return r.island.depth;
+}
+/* the configured (pre-overflow) length of a given island face — front/back
+   share the island's own length; the end caps run the island's total depth */
+function islandFaceRawLen(r, wid){
+  return (wid==='ISLAND3'||wid==='ISLAND4') ? islandTotalDepth(r) : (Number(r.walls.ISLAND)||0);
+}
 function corners(r, id){
+  /* an island's corners depend on how many of its faces carry cabinets
+     (r.island.sides), never on the room's own wall shape — a freestanding
+     island has no relationship to the room's L/U corners. Only kicks in
+     once sides is explicitly set (2 or 4, via the new "Cabinet sides"
+     picker), so a room saved before this existed keeps its exact old
+     behavior, quirks included, rather than silently changing shape. */
+  if(ISLAND_FACE_IDS.includes(id) && r.island && r.island.sides){
+    return r.island.sides===4 ? {start:true,end:true,big:false} : {start:false,end:false};
+  }
   if(r.shape==='L')  return id==='A'?{start:true,end:false,big:true}:{start:true,end:false,big:false};
   if(r.shape==='U'){ if(id==='A')return{start:true,end:false,big:true}; if(id==='B')return{start:true,end:true,big:false}; return{start:true,end:false}; }
   return {start:false,end:false};
@@ -534,9 +577,15 @@ function newManualItem(entry, defaultD){
   return {key:genId(), type:entry.type, code, label:entry.label, w:entry.w, d:defaultD, tall:entry.tall};
 }
 function layoutWall(r, id){
-  /* ISLAND2 (the far face of a double-sided island) always runs the same
-     physical length as ISLAND — no separate length field to keep in sync */
-  const L = Number(r.walls[id==='ISLAND2'?'ISLAND':id])||0, cfg = r.cfg[id]||{}, cr = corners(r,id);
+  /* ISLAND2 (back face) always runs the island's own length (r.walls.ISLAND) —
+     no separate field to keep in sync. ISLAND3/ISLAND4 (end caps, 4-sided only)
+     run the island's total front-to-back depth instead, since they're rotated
+     90° from the front/back faces — also derived, never independently stored. */
+  let L;
+  if(id==='ISLAND2') L = Number(r.walls.ISLAND)||0;
+  else if(id==='ISLAND3'||id==='ISLAND4') L = islandTotalDepth(r);
+  else L = Number(r.walls[id])||0;
+  const cfg = r.cfg[id]||{}, cr = corners(r,id);
   /* a tall/tower/linen unit is floor-to-ceiling by definition — its height
      always tracks the room's current ceiling/upper-cabinet line rather than
      a fixed nominal number, so it can't drift out of sync (leaving a gap
@@ -898,7 +947,9 @@ function drawPlan(){
   else if(r.shape==='galley'){W=Math.max(A.L,B.L);H=Math.max(100,bd*4);}
   else {W=B.L;H=Math.max(A.L,C.L);}
   const hasIsland = r.type==='kitchen' && r.island.enabled && Number(r.walls.ISLAND)>0;
-  const islandH = hasIsland ? 50+r.island.depth+(r.island.bar?40:0) : 0;
+  const islSidesH = (hasIsland && r.island.sides) || 1;
+  const islandH = hasIsland ? 50+r.island.depth+(islSidesH<2&&r.island.bar?40:0)
+    +(islSidesH>=2?20+r.island.depth2:0)+(islSidesH===4?2*(20+r.island.endDepth):0) : 0;
   if(hasIsland) W = Math.max(W, Number(r.walls.ISLAND));
   const totalH = H+islandH;
   const pad=130, s=Math.min((cv.width-2*pad)/W,(cv.height-2*pad)/totalH);
@@ -1018,36 +1069,56 @@ function drawPlan(){
   if(hasIsland){
     planHit.walls.ISLAND='H';
     const lay=layoutWall(r,'ISLAND'), rd=r.island.depth, yTop=H+30;
-    const inRunIsl = cabRunSet(lay.items);
-    for(const it of lay.items){
-      const cd=it.d||rd, x=X(it.x), w=it.w*s, y=Y(yTop), h=cd*s;
-      const fill = ['fridge','range'].includes(it.type)?'#f3e9e6': it.type==='filler'?'#e6ebef': cabF;
-      if(inRunIsl.has(it)){ c.save(); c.fillStyle=fill; c.fillRect(x,y,w,h); c.restore(); }
-      else rect(c,x,y,w,h,2,'#1b2a3a',fill);
-      if(it.type!=='filler') fitTxt(c,it.label,x+w/2,y+h/2,w,h,15);
-      decorate(it,x,y,w,h,true);
+    const sidesP = r.island.sides||1;
+    /* draws one face as its own horizontal strip — reused for front/back and
+       (for a 4-sided island) both end caps too. A true compass-correct
+       rotated rectangle for the ends would need a lot more geometry for
+       fairly little practical gain here; every cabinet still gets its own
+       correct dimensions/labels, just stacked as its own labeled strip
+       rather than literally turned 90° on the sheet. */
+    function islandStrip(lay2, depth, yTop2, label){
+      if(!lay2.L) return 0;
+      const inRun = cabRunSet(lay2.items);
+      for(const it of lay2.items){
+        const cd=it.d||depth, x=X(it.x), w=it.w*s, y=Y(yTop2), h=cd*s;
+        const fill = ['fridge','range'].includes(it.type)?'#f3e9e6': it.type==='filler'?'#e6ebef': cabF;
+        if(inRun.has(it)){ c.save(); c.fillStyle=fill; c.fillRect(x,y,w,h); c.restore(); }
+        else rect(c,x,y,w,h,2,'#1b2a3a',fill);
+        if(it.type!=='filler') fitTxt(c,it.label,x+w/2,y+h/2,w,h,15);
+        decorate(it,x,y,w,h,true);
+      }
+      const stripD=Math.max(...lay2.items.map(i=>i.d||depth));
+      for(const seg of counterSegments(lay2.items)){
+        const segD=Math.max(...seg.items.map(i=>i.d||depth));
+        rect(c,X(seg.t0),Y(yTop2),X(seg.t1)-X(seg.t0),segD*s,2,'#1b2a3a',null);
+        const tickLen=Math.min(5,segD*.3)*s;
+        let tx=seg.t0;
+        for(const it of seg.items){ tx+=it.w; if(tx>=seg.t1-.01) continue;
+          const px=X(tx); line(c,px,Y(yTop2)+segD*s,px,Y(yTop2)+segD*s-tickLen,2,'#1b2a3a'); }
+      }
+      dimV(c,Y(yTop2),Y(yTop2)+depth*s,X(0)-20,fmt(depth)+'"',12);
+      txt(c,label,X(lay2.L/2),Y(yTop2)-16,13,'#5d6d80');
+      for(const it of lay2.items){ if(it.type==='filler') continue;
+        dimH(c,X(it.x),X(it.x+it.w),Y(yTop2)+stripD*s+16,fmt(it.w)+'"',9); }
+      return stripD;
     }
-    for(const seg of counterSegments(lay.items)){
-      const segD=Math.max(...seg.items.map(i=>i.d||rd));
-      rect(c,X(seg.t0),Y(yTop),X(seg.t1)-X(seg.t0),segD*s,2,'#1b2a3a',null);
-      const tickLen=Math.min(5,segD*.3)*s;
-      let tx=seg.t0;
-      for(const it of seg.items){ tx+=it.w; if(tx>=seg.t1-.01) continue;
-        const px=X(tx); line(c,px,Y(yTop)+segD*s,px,Y(yTop)+segD*s-tickLen,2,'#1b2a3a'); }
-    }
-    dimV(c,Y(yTop),Y(yTop)+rd*s,X(0)-20,fmt(rd)+'"',12); /* island depth — the width dimension
-      above only covers its length along the run, not how deep it is front-to-back */
-    const ce=Y(yTop)+(rd+1.5)*s; line(c,X(0),ce,X(lay.L),ce,1.5,'#8b7c55');
-    if(r.island.bar){
-      const oy2=Y(yTop)+rd*s+14, n=Math.max(1,r.island.barChairs);
+    let yCursor=yTop;
+    if(sidesP===4) yCursor += islandStrip(layoutWall(r,'ISLAND3'), r.island.endDepth, yCursor, 'ISLAND — LEFT END')+34;
+    const frontD = islandStrip(lay, rd, yCursor, 'ISLAND — FRONT'+(sidesP<2&&r.island.bar?' · BAR SEATING':''));
+    const ceF=Y(yCursor)+(frontD+1.5)*s; line(c,X(0),ceF,X(lay.L),ceF,1.5,'#8b7c55');
+    if(sidesP<2 && r.island.bar){
+      const oy2=Y(yCursor)+frontD*s+14, n=Math.max(1,r.island.barChairs);
       line(c,X(0),oy2,X(lay.L),oy2,1.5,'#8b7c55',[4,3]);
       for(let i=0;i<n;i++){ const cx=X((i+.5)*lay.L/n);
         c.beginPath();c.arc(cx,oy2+16,7,0,7);c.strokeStyle='#5d6d80';c.lineWidth=1.5;c.stroke(); }
     }
-    txt(c,'ISLAND'+(r.island.bar?' · BAR SEATING':''),X(lay.L/2),Y(yTop)-44,15,'#5d6d80');
+    yCursor += frontD+34;
+    if(sidesP>=2){
+      const lay2b=layoutWall(r,'ISLAND2');
+      yCursor += islandStrip(lay2b, r.island.depth2, yCursor, 'ISLAND — BACK')+34;
+    }
+    if(sidesP===4) islandStrip(layoutWall(r,'ISLAND4'), r.island.endDepth, yCursor, 'ISLAND — RIGHT END');
     dimH(c,X(0),X(lay.L),Y(yTop)-26,fmt(lay.L)+'"',14);
-    for(const it of lay.items){ if(it.type==='filler') continue;
-      dimH(c,X(it.x),X(it.x+it.w),Y(yTop)-9,fmt(it.w)+'"',9); }
   }
 
   txt(c, r.name.toUpperCase()+' — PLAN', X(W/2), Y(0)-82, 20, '#5d6d80');
@@ -1258,8 +1329,11 @@ function draw3D(){
   const islLeftClear = (hasIsland3D && (r.shape==='L'||r.shape==='U')) ? bd+24 : 0;
   const islRightClear = (hasIsland3D && r.shape==='U') ? bd+24 : 0;
   if(hasIsland3D){
-    W=Math.max(W, Number(r.walls.ISLAND)+islLeftClear+islRightClear);
-    D=Math.max(D, bd+46+r.island.depth+(r.island.bar?25:0)+20);
+    /* a 4-sided island's end caps stick out past the island's own length on
+       both sides — the room needs to be wide enough to clear them too */
+    const endStick = r.island.sides===4 ? r.island.endDepth*2 : 0;
+    W=Math.max(W, Number(r.walls.ISLAND)+endStick+islLeftClear+islRightClear);
+    D=Math.max(D, bd+46+islandTotalDepth(r)+((!r.island.sides||r.island.sides<2)&&r.island.bar?25:0)+20);
   }
 
   flrTex.repeat.set(Math.max(1,W/28),Math.max(1,D/28));
@@ -1536,119 +1610,145 @@ function draw3D(){
     const idp=r.island.depth, ih=r.island.height, nearZ=bd+46;
     let cx0=islLeftClear+Math.max(0,(W-islLeftClear-islRightClear-lay.L)/2);
     cx0=Math.max(islLeftClear, Math.min(cx0, Math.max(islLeftClear, W-islRightClear-lay.L)));
-    function pos2(t,off){ return [cx0+t, nearZ+off]; }
-    function put2(w,h,d,t,yC,off,mat,edges=true){
-      const [px,pz]=pos2(t+w/2, off+d/2);
-      const geo=new THREE.BoxGeometry(w,h,d); const m=new THREE.Mesh(geo,mat);
-      m.position.set(px,yC,pz); m.castShadow=true; m.receiveShadow=true; g.add(m);
-      if(edges){const e=edge(geo); e.position.copy(m.position); g.add(e);}
-      return m;
-    }
-    /* doors face the walkway side (off≈0, toward the main wall/range) — the
-       OPPOSITE convention from a wall run's doorFace, since here the "away
-       from the wall" direction is negative off, not positive */
-    function placeHandle2(w,h,t,yC,frontOff,left){ /* mirrors placeHandle — the island's
-      door-facing side is the OPPOSITE direction (negative off), so the handle
-      stands off the face toward frontOff-1.2, not +1.2 */
-      if(!r.fin.handleBase || w<5) return;
-      const m = handleMul, hx = left ? t+Math.min(4.5,w*.18) : t+w-Math.min(4.5,w*.18),
-        hy = yC+h*.24, hOff = frontOff-1.9;
-      if(r.fin.handleBase===1) put2(.55,4.5*m,.55, hx,hy,hOff, mHandle, false);
-      else if(r.fin.handleBase===2) put2(1.1*m,1.1*m,1.1*m, hx-.55*m,hy,hOff, mHandle, false);
-      else put2(2.6*m,.55,.55, hx-2.6*m,hy,hOff, mHandle, false);
-    }
-    function doorFace2(w,h,t,yC,frontOff,handleLeft){
-      if(r.fin.door!==0){
-        const inset=Math.min(3,w*.14), pw=w-2*inset, ph=h-2*inset;
-        if(pw>=3 && ph>=3){
-          if(r.fin.door===2){
-            put2(pw,ph,1,t+inset,yC,frontOff-.5,mCabL,true);
-            const inset2=inset*.6, pw2=pw-2*inset2, ph2=ph-2*inset2;
-            if(pw2>2&&ph2>2) put2(pw2,ph2,.6,t+inset+inset2,yC,frontOff-1.1,mCabL,true);
-          } else put2(pw,ph,.8,t+inset,yC,frontOff+.9,mCabD,true);
+    const sides = r.island.sides||1, idp2=r.island.depth2, endD=r.island.endDepth;
+    const totalD = islandTotalDepth(r), islLen = lay.L;
+
+    /* one face of the island, in a local (t,off) frame — t runs along the
+       face's own cabinet run, off runs from the door (0) back into the
+       island. origin/tDir/offDir map that local frame into world X/Z, so
+       the exact same per-item logic (fridge/range/sink/generic cabinet)
+       works for all 4 faces: front/back run along the island's length with
+       depth along Z; the two end caps run along the island's total depth
+       with their own depth along X, rotated 90° from front/back. */
+    function renderFace(lay2, depth, originX, originZ, tDir, offDir){
+      if(!lay2 || !lay2.L) return;
+      function pos2(t,off){ return [originX+tDir[0]*t+offDir[0]*off, originZ+tDir[1]*t+offDir[1]*off]; }
+      /* BoxGeometry(w,h,d) always puts w on the local X axis and d on Z —
+         fine for front/back (tDir along X already), but the end caps run
+         along Z instead, so without a 90° turn every box would render with
+         its width and depth swapped (a cabinet stretched sideways instead
+         of standing the right way round). Same rotation trick placeRun
+         already uses for the room's own left/right side walls. */
+      const rotY = tDir[0]===0 ? Math.PI/2 : 0;
+      function put2(w,h,d,t,yC,off,mat,edges=true){
+        const [px,pz]=pos2(t+w/2, off+d/2);
+        const geo=new THREE.BoxGeometry(w,h,d); const m=new THREE.Mesh(geo,mat);
+        m.position.set(px,yC,pz); m.rotation.y=rotY; m.castShadow=true; m.receiveShadow=true; g.add(m);
+        if(edges){const e=edge(geo); e.position.copy(m.position); e.rotation.copy(m.rotation); g.add(e);}
+        return m;
+      }
+      /* doors face the "off≈0" side (the door-facing side for this face's own
+         orientation) — the OPPOSITE convention from a wall run's doorFace,
+         since here the "away from the shared core" direction is negative off */
+      function placeHandle2(w,h,t,yC,frontOff,left){
+        if(!r.fin.handleBase || w<5) return;
+        const m = handleMul, hx = left ? t+Math.min(4.5,w*.18) : t+w-Math.min(4.5,w*.18),
+          hy = yC+h*.24, hOff = frontOff-1.9;
+        if(r.fin.handleBase===1) put2(.55,4.5*m,.55, hx,hy,hOff, mHandle, false);
+        else if(r.fin.handleBase===2) put2(1.1*m,1.1*m,1.1*m, hx-.55*m,hy,hOff, mHandle, false);
+        else put2(2.6*m,.55,.55, hx-2.6*m,hy,hOff, mHandle, false);
+      }
+      function doorFace2(w,h,t,yC,frontOff,handleLeft){
+        if(r.fin.door!==0){
+          const inset=Math.min(3,w*.14), pw=w-2*inset, ph=h-2*inset;
+          if(pw>=3 && ph>=3){
+            if(r.fin.door===2){
+              put2(pw,ph,1,t+inset,yC,frontOff-.5,mCabL,true);
+              const inset2=inset*.6, pw2=pw-2*inset2, ph2=ph-2*inset2;
+              if(pw2>2&&ph2>2) put2(pw2,ph2,.6,t+inset+inset2,yC,frontOff-1.1,mCabL,true);
+            } else put2(pw,ph,.8,t+inset,yC,frontOff+.9,mCabD,true);
+          }
         }
+        placeHandle2(w,h,t,yC,frontOff,handleLeft);
       }
-      placeHandle2(w,h,t,yC,frontOff,handleLeft);
-    }
-    const itoe=r.toe, ibh=(ih-r.ctT)-itoe; /* cabinet body stops short of the finished
-      counter height by the countertop's own thickness, same as a wall run's baseH —
-      otherwise the countertop slab overlaps the cabinet tops and the two coincident
-      top surfaces z-fight, showing as seam lines cutting across the counter */
-    const sinkItems=[];
-    for(const it of lay.items){
-      if(it.type==='sink') sinkItems.push(it);
-      if(it.type==='fridge'){
-        const fw=it.w-.5, fx=it.x+.25, fMat=r.fin.fridgeBuiltIn?mCab:mAppl, isXL=it.code==='REF72', midX=fx+fw/2;
-        put2(fw,FR_H,idp,fx,FR_H/2,0,fMat);
-        if(r.fin.fridgeBuiltIn){
-          if(isXL){
-            const half=fw/2-.75, rightT=midX+.75;
-            doorFace2(half-3,FR_H-6,fx+1.5,FR_H/2,0);
-            doorFace2(half-3,FR_H-6,rightT+1.5,FR_H/2,0,true);
-            put2(1,FR_H-6,idp-2,midX-.5,FR_H/2,1,mTrim,false);
-          } else doorFace2(fw-3,FR_H-6,fx+1.5,FR_H/2,0);
-        } else if(isXL){
-          const q=fw/4;
-          put2(1,FR_H-4,1,midX-.5,FR_H/2,-.3,mTrim,false); /* fridge/freezer divider */
-          put2(.7,14,1,fx+q-3.5,FR_H*.58,-.3,mTrim,false); put2(.7,14,1,fx+q+2.8,FR_H*.58,-.3,mTrim,false);
-          put2(.7,14,1,fx+fw-q-3.5,FR_H*.58,-.3,mTrim,false); put2(.7,14,1,fx+fw-q+2.8,FR_H*.58,-.3,mTrim,false);
-        } else {
-          put2(.6,FR_H-6,.6,fx+fw/2-.3,FR_H/2,-.3,mTrim,false);
-          put2(.7,14,1,fx+fw*.5-3.5,FR_H*.58,-.3,mTrim,false);
-          put2(.7,14,1,fx+fw*.5+2.8,FR_H*.58,-.3,mTrim,false);
+      const itoe=r.toe, ibh=(ih-r.ctT)-itoe;
+      const sinkItems=[];
+      for(const it of lay2.items){
+        if(it.type==='sink') sinkItems.push(it);
+        if(it.type==='fridge'){
+          const fw=it.w-.5, fx=it.x+.25, fMat=r.fin.fridgeBuiltIn?mCab:mAppl, isXL=it.code==='REF72', midX=fx+fw/2;
+          put2(fw,FR_H,depth,fx,FR_H/2,0,fMat);
+          if(r.fin.fridgeBuiltIn){
+            if(isXL){
+              const half=fw/2-.75, rightT=midX+.75;
+              doorFace2(half-3,FR_H-6,fx+1.5,FR_H/2,0);
+              doorFace2(half-3,FR_H-6,rightT+1.5,FR_H/2,0,true);
+              put2(1,FR_H-6,depth-2,midX-.5,FR_H/2,1,mTrim,false);
+            } else doorFace2(fw-3,FR_H-6,fx+1.5,FR_H/2,0);
+          } else if(isXL){
+            const q=fw/4;
+            put2(1,FR_H-4,1,midX-.5,FR_H/2,-.3,mTrim,false);
+            put2(.7,14,1,fx+q-3.5,FR_H*.58,-.3,mTrim,false); put2(.7,14,1,fx+q+2.8,FR_H*.58,-.3,mTrim,false);
+            put2(.7,14,1,fx+fw-q-3.5,FR_H*.58,-.3,mTrim,false); put2(.7,14,1,fx+fw-q+2.8,FR_H*.58,-.3,mTrim,false);
+          } else {
+            put2(.6,FR_H-6,.6,fx+fw/2-.3,FR_H/2,-.3,mTrim,false);
+            put2(.7,14,1,fx+fw*.5-3.5,FR_H*.58,-.3,mTrim,false);
+            put2(.7,14,1,fx+fw*.5+2.8,FR_H*.58,-.3,mTrim,false);
+          }
+          continue;
         }
-        continue;
-      }
-      if(it.type==='range'){
-        const rw=it.w-.5, rx=it.x+.25;
-        put2(rw,36,idp,rx,18,0,mAppl); put2(rw-2,3,1,rx+1,35.5,.5,mTrim,false);
-        const bR=Math.min(rw,idp)*.16, bR2=bR*.55;
-        for(let bi=0;bi<4;bi++){
-          const bt=rx+rw*(.28+(bi%2)*.44), bo=idp*(.28+Math.floor(bi/2)*.44);
-          const [bx,bz]=pos2(bt,bo);
-          const ring=new THREE.Mesh(new THREE.RingGeometry(bR2,bR,24), mTrim);
-          ring.rotation.x=-Math.PI/2; ring.position.set(bx,36.03,bz); g.add(ring);
+        if(it.type==='range'){
+          const rw=it.w-.5, rx=it.x+.25;
+          put2(rw,36,depth,rx,18,0,mAppl); put2(rw-2,3,1,rx+1,35.5,.5,mTrim,false);
+          const bR=Math.min(rw,depth)*.16, bR2=bR*.55;
+          for(let bi=0;bi<4;bi++){
+            const bt=rx+rw*(.28+(bi%2)*.44), bo=depth*(.28+Math.floor(bi/2)*.44);
+            const [bx,bz]=pos2(bt,bo);
+            const ring=new THREE.Mesh(new THREE.RingGeometry(bR2,bR,24), mTrim);
+            ring.rotation.x=-Math.PI/2; ring.position.set(bx,36.03,bz); g.add(ring);
+          }
+          continue;
         }
-        continue;
+        if(it.type==='minifridge'){
+          put2(it.w-.5,ibh,depth,it.x+.25,itoe+ibh/2,0,mAppl);
+          put2(.6,ibh-8,.6,it.x+it.w/2-.3,itoe+ibh/2,-.5,mTrim,false);
+          put2(.7,10,1,it.x+it.w*.5-3.5,itoe+ibh*.6,-.5,mTrim,false);
+          put2(.7,10,1,it.x+it.w*.5+2.8,itoe+ibh*.6,-.5,mTrim,false);
+          continue;
+        }
+        /* a spice rack, trash, or ice-maker pullout is a narrow insert — it
+           doesn't need to run the full front-to-back depth the way a real
+           base cabinet does, so it stops well short of the far edge instead
+           of looking like it tunnels straight through the island */
+        const shallow = ['spice','trash','ice'].includes(it.type);
+        const cd = shallow ? Math.max(15, depth*.55) : depth;
+        put2(it.w-.5,ibh,cd,it.x+.25,itoe+ibh/2,0,mCab);
+        if(it.type!=='filler') doorFace2(it.w-.5,ibh-3,it.x+.25,itoe+ibh/2,0);
+        if(it.type==='db'){
+          put2(it.w-1.5,.4,.3,it.x+.75,itoe+ibh/3,-.1,mTrim,false);
+          put2(it.w-1.5,.4,.3,it.x+.75,itoe+2*ibh/3,-.1,mTrim,false);
+        }
+        if(itoe>0) put2(it.w-6,itoe,cd-3,it.x+3,itoe/2,0,mCabD,false);
       }
-      /* a spice rack, trash, or ice-maker pullout is a narrow insert — it
-         doesn't need to run the island's full front-to-back depth the way a
-         real base cabinet does, so it stops well short of the far edge
-         instead of looking like it tunnels straight through the island */
-      const shallow = ['spice','trash','ice'].includes(it.type);
-      const cd = shallow ? Math.max(15, idp*.55) : idp;
-      if(it.type==='minifridge'){ /* under-counter appliance front, not a cabinet door —
-        this used to fall through to the full-height fridge branch above, forcing the
-        whole island up to 70" tall; now it stays within the island's own counter height */
-        put2(it.w-.5,ibh,cd,it.x+.25,itoe+ibh/2,0,mAppl);
-        put2(.6,ibh-8,.6,it.x+it.w/2-.3,itoe+ibh/2,-.5,mTrim,false);
-        put2(.7,10,1,it.x+it.w*.5-3.5,itoe+ibh*.6,-.5,mTrim,false);
-        put2(.7,10,1,it.x+it.w*.5+2.8,itoe+ibh*.6,-.5,mTrim,false);
-        continue;
+      /* countertop for this face only — a real island's top is one
+         continuous slab, but rendering it per-face (each covering its own
+         depth band) keeps the corner math simple and still produces a
+         gap-free surface correctly excluded around tall items; the small
+         overlap at each corner is invisible (same material either way) */
+      for(const seg of counterSegments(lay2.items)){
+        put2(seg.t1-seg.t0,Math.max(1,r.ctT),depth,seg.t0,ih-r.ctT/2,0,mTop);
       }
-      put2(it.w-.5,ibh,cd,it.x+.25,itoe+ibh/2,0,mCab);
-      if(it.type!=='filler') doorFace2(it.w-.5,ibh-3,it.x+.25,itoe+ibh/2,0);
-      if(it.type==='db'){
-        put2(it.w-1.5,.4,.3,it.x+.75,itoe+ibh/3,-.1,mTrim,false);
-        put2(it.w-1.5,.4,.3,it.x+.75,itoe+2*ibh/3,-.1,mTrim,false);
+      for(const it of sinkItems){
+        const scx=it.x+it.w*.5; /* faucet centered on the basin's own midpoint */
+        put2(it.w*.6,1.2,depth*.55,it.x+it.w*.2,ih+.4,depth*.22,mAppl,false);
+        put2(1,5,1,scx-.5,ih+2.5,depth*.08,mTrim,false);
+        put2(3.2,1,1,scx-1.6,ih+5,depth*.16,mTrim,false);
       }
-      if(itoe>0) put2(it.w-6,itoe,cd-3,it.x+3,itoe/2,0,mCabD,false);
     }
-    const overhang=r.island.bar?13:0;
-    for(const seg of counterSegments(lay.items)){
-      put2(seg.t1-seg.t0,Math.max(1,r.ctT),idp+overhang,seg.t0,ih-r.ctT/2,0,mTop);
+
+    renderFace(lay, idp, cx0, nearZ, [1,0], [0,1]);
+    if(sides>=2) renderFace(layoutWall(r,'ISLAND2'), idp2, cx0, nearZ+totalD, [1,0], [0,-1]);
+    if(sides===4){
+      renderFace(layoutWall(r,'ISLAND3'), endD, cx0-endD, nearZ, [0,1], [1,0]);
+      renderFace(layoutWall(r,'ISLAND4'), endD, cx0+islLen+endD, nearZ, [0,1], [-1,0]);
     }
-    /* sink basin + faucet — faucet on the walkway side, same side as the
-       doors, so it doesn't sit in front of bar-seating overhang */
-    for(const it of sinkItems){
-      put2(it.w*.6,1.2,idp*.55,it.x+it.w*.2,ih+.4,idp*.22,mAppl,false);
-      put2(1,5,1,it.x+it.w*.47,ih+2.5,idp*.08,mTrim,false);
-      put2(3.2,1,1,it.x+it.w*.44,ih+5,idp*.16,mTrim,false);
-    }
-    if(r.island.bar){
-      const n=Math.max(1,r.island.barChairs);
+
+    /* bar seating needs an open side to put stools on — only offered (and
+       only rendered) on a classic single-face island */
+    if(sides<2 && r.island.bar){
+      const overhang=13, n=Math.max(1,r.island.barChairs), seatY=24;
       for(let i=0;i<n;i++){
-        const [sx,sz]=pos2((i+.5)*lay.L/n, idp+overhang-6), seatY=24;
+        const sx=cx0+(i+.5)*islLen/n, sz=nearZ+idp+overhang-6;
         const seat=new THREE.Mesh(new THREE.CylinderGeometry(6,6,2,16),mTrim);
         seat.position.set(sx,seatY,sz); seat.castShadow=true; g.add(seat);
         for(const [dx,dz] of [[-4,-4],[4,-4],[-4,4],[4,4]]){
@@ -1660,7 +1760,7 @@ function draw3D(){
     if(r.island.pendant){
       const n=Math.max(1,r.island.pendantCount);
       for(let i=0;i<n;i++){
-        const [px,pz]=pos2((i+.5)*lay.L/n, idp/2);
+        const px=cx0+(i+.5)*islLen/n, pz=nearZ+totalD/2; /* centered over the whole footprint */
         const cord=new THREE.Mesh(new THREE.CylinderGeometry(.25,.25,Math.max(1,ceil-ih-14),6),mTrim);
         cord.position.set(px,(ceil+ih+14)/2,pz); g.add(cord);
         const shade=new THREE.Mesh(new THREE.CylinderGeometry(4,5,6,16),mTrim);
@@ -1688,13 +1788,21 @@ function buildSchedule(r){
   const rows={}; let baseLF=0, upperLF=0, tallN=0;
   const idList = wallIds(r).slice();
   const hasIsl = r.type==='kitchen' && r.island.enabled && Number(r.walls.ISLAND)>0;
-  if(hasIsl) idList.push('ISLAND');
+  const islSidesS = (hasIsl && r.island.sides) || 1;
+  if(hasIsl){
+    idList.push('ISLAND');
+    if(islSidesS>=2) idList.push('ISLAND2');
+    if(islSidesS===4) idList.push('ISLAND3','ISLAND4');
+  }
+  const islandDepthFor = id => id==='ISLAND'?r.island.depth : id==='ISLAND2'?r.island.depth2
+    : (id==='ISLAND3'||id==='ISLAND4') ? r.island.endDepth : r.baseD;
   for(const id of idList){
+    const isIslandFace = ISLAND_FACE_IDS.includes(id);
     const lay=layoutWall(r,id);
     for(const it of lay.items){
-      if(['range','fridge','dw','corner','filler','gap','washer','dryer','rod'].includes(it.type)) continue;
+      if(['range','fridge','dw','minifridge','corner','filler','gap','washer','dryer','rod'].includes(it.type)) continue;
       const tall=it.type==='tall'||it.type==='tower';
-      const h=tall?it.tall:(id==='ISLAND'?r.island.height-r.toe:r.baseH), d=it.d||(id==='ISLAND'?r.island.depth:r.baseD);
+      const h=tall?it.tall:(isIslandFace?r.island.height-r.toe:r.baseH), d=it.d||(isIslandFace?islandDepthFor(id):r.baseD);
       /* keyed by code+dimensions, not just code — a Manual-layout cabinet
          can share a code with a standard-depth one elsewhere but have a
          different custom depth, and each needs its own schedule row */
@@ -1703,7 +1811,7 @@ function buildSchedule(r){
       rows[k].qty++; rows[k].walls.add(id);
       if(tall) tallN++; else baseLF+=it.w;
     }
-    if(id==='ISLAND') continue; /* islands have no upper cabinets — pendant lights instead, not part of the schedule */
+    if(isIslandFace) continue; /* islands have no upper cabinets — pendant lights instead, not part of the schedule */
     for(const u of (lay.uppers||[])){
       if(!u.code||u.code==='F'||u.h<=0||u.type==='mirror') continue;
       const d=u.d||(u.type==='overRef'?24:r.upD);
@@ -2918,6 +3026,43 @@ function hoodEditorHtml(r, wid){
   </div>
   <label class="chk"><input type="checkbox" class="hoodPanel" data-wall="${wid}" ${hd.panel?'checked':''}>Panel-ready — clad in the cabinet finish, flush and built-in, instead of a stainless duct hood</label>`:''}`;
 }
+/* one island face's fixture/manual editor — identical markup to a wall's,
+   just keyed to whichever island face id (ISLAND/ISLAND2/ISLAND3/ISLAND4)
+   is passed in, so the same generic .wMode/.wFix/.miAdd/etc handlers below
+   drive all 4 faces without any face-specific wiring */
+function islandFaceCardHtml(r, t, wid, title){
+  const cfgW = r.cfg[wid]||{};
+  const iman = !!cfgW.manual;
+  const rawLen = islandFaceRawLen(r,wid), iov = layoutWall(r,wid).overflow;
+  const faceD = islandFaceDepth(r,wid);
+  return `<div class="wallcard" style="margin-top:10px"><h4>${title}</h4>
+    <div class="segs" style="margin-bottom:10px">
+      <button class="wMode ${!iman?'on':''}" data-wall="${wid}" data-mode="counter">Automatic</button>
+      <button class="wMode ${iman?'on':''}" data-wall="${wid}" data-mode="manual">Manual</button>
+    </div>
+    ${iman ? `
+    <div class="hint">Add each item by hand, drag ⠿ to reorder, and set its own width and depth.</div>
+    ${(cfgW.manualItems||[]).length ? `<div style="display:flex;gap:6px;padding:2px 0 4px;font:600 10px var(--sans);color:var(--dim)">
+      <span style="width:16px"></span><span style="flex:1">ITEM</span><span style="width:52px">W (in)</span><span style="width:52px">D (in)</span><span style="width:22px"></span>
+    </div>` : ''}
+    ${(cfgW.manualItems||[]).map((it,idx)=>`
+      <div class="manualItem" draggable="true" data-wall="${wid}" data-idx="${idx}" style="display:flex;align-items:center;gap:6px;padding:4px 0;border-bottom:1px solid var(--line)">
+        <span style="cursor:grab;color:var(--dim)">⠿</span>
+        <input class="miLabel" data-wall="${wid}" data-idx="${idx}" value="${it.label}" style="flex:1;min-width:0">
+        <input class="miW" type="number" step="0.5" min="1" data-wall="${wid}" data-idx="${idx}" value="${it.w}" style="width:52px">
+        <input class="miD" type="number" step="0.5" min="1" data-wall="${wid}" data-idx="${idx}" value="${it.d||faceD}" style="width:52px">
+        <button class="miDel" data-wall="${wid}" data-idx="${idx}" title="Remove" style="padding:2px 7px">✕</button>
+      </div>`).join('')}
+    <div class="fld" style="margin-top:8px"><label>Add item</label><select class="miAdd" data-wall="${wid}">
+      <option value="">+ choose an item…</option>
+      ${manualCatalog(r,wid).map((cent,ci)=>`<option value="${ci}">${cent.label} (${cent.w}")</option>`).join('')}
+    </select></div>
+    ` : `
+    ${Object.entries(t.fixtures).filter(([k])=>k!=='window').map(([k,name])=>`<label class="chk"><input type="checkbox" class="wFix" data-wall="${wid}" data-k="${k}" ${cfgW[k]?'checked':''}>${name}</label>`).join('')}
+    ${orderRowsHtml(t, cfgW, wid)}`}
+    ${iov>0.5?`<div class="hint" style="color:var(--dim);font-weight:600">⚠ These items need ~${fmt(rawLen+iov)}" — this face is only ${fmt(rawLen)}" long. Remove/shrink an item.</div>`:''}
+  </div>`;
+}
 function buildSidebar(){
   const r=room(), t=TYPES[r.type], side=$('sidebar');
   const ids=wallIds(r);
@@ -2995,52 +3140,36 @@ function buildSidebar(){
   <div class="sect"><h3>Kitchen island</h3>
     <label class="chk"><input type="checkbox" id="islEnabled" ${r.island.enabled?'checked':''}>Add a freestanding island</label>
     ${r.island.enabled?(()=>{
-      const iov = layoutWall(r,'ISLAND').overflow;
+      const sidesV = r.island.sides||1;
       return `
       <div class="row2">
         <div class="fld"><label>Length (in)</label><input type="number" step="0.5" id="islLen" value="${r.walls.ISLAND}"></div>
-        <div class="fld"><label>Depth (in)</label><input type="number" step="0.5" id="islDepth" value="${r.island.depth}"></div>
+        <div class="fld"><label>${sidesV>1?'Front depth (in)':'Depth (in)'}</label><input type="number" step="0.5" id="islDepth" value="${r.island.depth}"></div>
       </div>
+      <div class="fld"><label>Cabinet sides</label><select id="islSides">
+        <option value="1" ${sidesV===1?'selected':''}>1 wall — front face only</option>
+        <option value="2" ${sidesV===2?'selected':''}>2 walls — front + back</option>
+        <option value="4" ${sidesV===4?'selected':''}>4 walls — all the way around</option>
+      </select></div>
+      ${sidesV>=2?`<div class="fld"><label>Back depth (in)</label><input type="number" step="0.5" id="islDepth2" value="${r.island.depth2}"></div>`:''}
+      ${sidesV===4?`<div class="fld"><label>End cap depth (in), each end</label><input type="number" step="0.5" id="islEndDepth" value="${r.island.endDepth}"></div>`:''}
       <div class="row2">
         <div class="fld"><label>Counter height</label><select id="islHeight">
           <option value="36" ${r.island.height==36?'selected':''}>Standard (36")</option>
           <option value="42" ${r.island.height==42?'selected':''}>Bar height (42")</option>
         </select></div>
-        <div class="fld"><label>Bar seating</label>
-          <label class="chk" style="margin-top:9px"><input type="checkbox" id="islBar" ${r.island.bar?'checked':''}>Overhang + stools</label></div>
+        ${sidesV<2?`<div class="fld"><label>Bar seating</label>
+          <label class="chk" style="margin-top:9px"><input type="checkbox" id="islBar" ${r.island.bar?'checked':''}>Overhang + stools</label></div>`:'<div></div>'}
       </div>
-      ${r.island.bar?`<div class="fld"><label>Number of stools</label><input type="number" min="1" max="8" id="islChairs" value="${r.island.barChairs}"></div>`:''}
+      ${sidesV<2 ? (r.island.bar?`<div class="fld"><label>Number of stools</label><input type="number" min="1" max="8" id="islChairs" value="${r.island.barChairs}"></div>`:'')
+        : `<div class="hint">Bar seating needs an open side, so it's only available on a single-face island.</div>`}
       <label class="chk"><input type="checkbox" id="islPendant" ${r.island.pendant?'checked':''}>Decorative pendant lights</label>
       ${r.island.pendant?`<div class="fld"><label>Pendant count</label><input type="number" min="1" max="6" id="islPendantN" value="${r.island.pendantCount}"></div>`:''}
-      <div class="wallcard" style="margin-top:10px"><h4>ISLAND FIXTURES</h4>
-        ${(()=>{ const iman = !!(r.cfg.ISLAND&&r.cfg.ISLAND.manual); return `
-        <div class="segs" style="margin-bottom:10px">
-          <button class="wMode ${!iman?'on':''}" data-wall="ISLAND" data-mode="counter">Automatic</button>
-          <button class="wMode ${iman?'on':''}" data-wall="ISLAND" data-mode="manual">Manual</button>
-        </div>
-        ${iman ? `
-        <div class="hint">Add each island item by hand, drag ⠿ to reorder, and set its own width and depth.</div>
-        ${(r.cfg.ISLAND.manualItems||[]).length ? `<div style="display:flex;gap:6px;padding:2px 0 4px;font:600 10px var(--sans);color:var(--dim)">
-          <span style="width:16px"></span><span style="flex:1">ITEM</span><span style="width:52px">W (in)</span><span style="width:52px">D (in)</span><span style="width:22px"></span>
-        </div>` : ''}
-        ${(r.cfg.ISLAND.manualItems||[]).map((it,idx)=>`
-          <div class="manualItem" draggable="true" data-wall="ISLAND" data-idx="${idx}" style="display:flex;align-items:center;gap:6px;padding:4px 0;border-bottom:1px solid var(--line)">
-            <span style="cursor:grab;color:var(--dim)">⠿</span>
-            <input class="miLabel" data-wall="ISLAND" data-idx="${idx}" value="${it.label}" style="flex:1;min-width:0">
-            <input class="miW" type="number" step="0.5" min="1" data-wall="ISLAND" data-idx="${idx}" value="${it.w}" style="width:52px">
-            <input class="miD" type="number" step="0.5" min="1" data-wall="ISLAND" data-idx="${idx}" value="${it.d||r.island.depth}" style="width:52px">
-            <button class="miDel" data-wall="ISLAND" data-idx="${idx}" title="Remove" style="padding:2px 7px">✕</button>
-          </div>`).join('')}
-        <div class="fld" style="margin-top:8px"><label>Add to island</label><select class="miAdd" data-wall="ISLAND">
-          <option value="">+ choose an item…</option>
-          ${manualCatalog(r,'ISLAND').map((cent,ci)=>`<option value="${ci}">${cent.label} (${cent.w}")</option>`).join('')}
-        </select></div>
-        ` : `
-        ${Object.entries(t.fixtures).filter(([k])=>k!=='window').map(([k,name])=>`<label class="chk"><input type="checkbox" class="wFix" data-wall="ISLAND" data-k="${k}" ${r.cfg.ISLAND&&r.cfg.ISLAND[k]?'checked':''}>${name}</label>`).join('')}
-        ${orderRowsHtml(t, r.cfg.ISLAND||{}, 'ISLAND')}`}
-        ${iov>0.5?`<div class="hint" style="color:var(--dim);font-weight:600">⚠ These items need ~${fmt(Number(r.walls.ISLAND)+iov)}" — island is only ${fmt(r.walls.ISLAND)}" long. Remove/shrink an item or lengthen the island.</div>`:''}`;
-        })()}
-      </div>`;
+      ${islandFaceCardHtml(r,t,'ISLAND', sidesV>1?'ISLAND FIXTURES — FRONT':'ISLAND FIXTURES')}
+      ${sidesV>=2?islandFaceCardHtml(r,t,'ISLAND2','ISLAND FIXTURES — BACK'):''}
+      ${sidesV===4?islandFaceCardHtml(r,t,'ISLAND3','ISLAND FIXTURES — LEFT END'):''}
+      ${sidesV===4?islandFaceCardHtml(r,t,'ISLAND4','ISLAND FIXTURES — RIGHT END'):''}
+      `;
     })():''}
   </div>`:''}
   <div class="sect"><h3>Finishes & options</h3>
@@ -3089,7 +3218,7 @@ function buildSidebar(){
     const wid=el.dataset.wall; if(el.value==='') return;
     const entry=manualCatalog(r,wid)[Number(el.value)];
     r.cfg[wid]=r.cfg[wid]||{manual:true}; r.cfg[wid].manualItems=r.cfg[wid].manualItems||[];
-    r.cfg[wid].manualItems.push(newManualItem(entry, wid==='ISLAND'?r.island.depth:r.baseD));
+    r.cfg[wid].manualItems.push(newManualItem(entry, ISLAND_FACE_IDS.includes(wid)?islandFaceDepth(r,wid):r.baseD));
     buildSidebar(); render();
   }));
   side.querySelectorAll('.miLabel').forEach(el=>el.addEventListener('input',()=>{
@@ -3103,7 +3232,7 @@ function buildSidebar(){
   }));
   side.querySelectorAll('.miD').forEach(el=>el.addEventListener('input',()=>{
     const wid=el.dataset.wall, it=r.cfg[wid].manualItems[Number(el.dataset.idx)];
-    it.d=Math.max(1,Number(el.value)||(wid==='ISLAND'?r.island.depth:r.baseD)); render();
+    it.d=Math.max(1,Number(el.value)||(ISLAND_FACE_IDS.includes(wid)?islandFaceDepth(r,wid):r.baseD)); render();
   }));
   side.querySelectorAll('.miDel').forEach(el=>el.addEventListener('click',()=>{
     r.cfg[el.dataset.wall].manualItems.splice(Number(el.dataset.idx),1);
@@ -3255,6 +3384,13 @@ function buildSidebar(){
   const ie=$('islEnabled'); if(ie) ie.addEventListener('change',()=>{r.island.enabled=ie.checked;buildSidebar();render();});
   const il=$('islLen'); if(il) il.addEventListener('input',()=>{r.walls.ISLAND=Number(il.value)||0;render();});
   const idp=$('islDepth'); if(idp) idp.addEventListener('input',()=>{r.island.depth=Number(idp.value)||24;render();});
+  const isd=$('islSides'); if(isd) isd.addEventListener('change',()=>{
+    r.island.sides=Number(isd.value)||1;
+    if(r.island.sides>=2) r.island.bar=false; /* bar seating and extra cabinet faces both need the same open side */
+    buildSidebar(); render();
+  });
+  const idp2=$('islDepth2'); if(idp2) idp2.addEventListener('input',()=>{r.island.depth2=Number(idp2.value)||24;render();});
+  const iEnd=$('islEndDepth'); if(iEnd) iEnd.addEventListener('input',()=>{r.island.endDepth=Number(iEnd.value)||18;render();});
   const ih=$('islHeight'); if(ih) ih.addEventListener('change',()=>{r.island.height=Number(ih.value)||36;render();});
   const ib=$('islBar'); if(ib) ib.addEventListener('change',()=>{r.island.bar=ib.checked;buildSidebar();render();});
   const ic=$('islChairs'); if(ic) ic.addEventListener('input',()=>{r.island.barChairs=Math.max(1,Number(ic.value)||4);render();});
